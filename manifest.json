@@ -1,0 +1,21 @@
+{
+  "name": "framas Transport App",
+  "short_name": "Framas Transport",
+  "description": "Framas Transport Operations Management Portal",
+  "start_url": "index.php",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#118DFF",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

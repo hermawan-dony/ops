@@ -1,0 +1,11 @@
+node_modules/
+vendor/
+.env
+.DS_Store
+uploads/*
+!uploads/.gitkeep
+schema_dump.php
+dump_schema.php
+error_log
+config.php
+sendwa.php
