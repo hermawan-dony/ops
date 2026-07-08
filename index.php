@@ -93,7 +93,7 @@ $stmt = $pdo->prepare("SELECT t.*, d.name as dest_name, p.name as pass_name, c.c
                        LEFT JOIN master_passengers p ON t.passenger_id = p.id 
                        JOIN master_cars c ON t.car_id = c.id
                        JOIN shifts s ON t.shift_id = s.id
-                       WHERE s.driver_id = ? AND DATE(t.start_time) BETWEEN ? AND ? AND t.status = 'completed' 
+                       WHERE s.driver_id = ? AND DATE(t.start_time) BETWEEN ? AND ? 
                        ORDER BY t.start_time DESC");
 $stmt->execute([$driver_id, $hist_start, $hist_end]);
 $history_trips = $stmt->fetchAll();
