@@ -65,6 +65,10 @@ if ($active_shift) {
                            WHERE t.shift_id = ? AND (d.name = '?' OR p.name = '?' OR d.name IS NULL OR p.name IS NULL)");
     $stmt->execute([$active_shift['id']]);
     $incomplete_trips_count = (int)$stmt->fetchColumn();
+
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM trips WHERE shift_id = ? AND status = 'ongoing'");
+    $stmt->execute([$active_shift['id']]);
+    $ongoing_trips_count = (int)$stmt->fetchColumn();
 }
 
 // 4. Get Master Data
@@ -989,6 +993,21 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
     function confirmEndShift() {
         const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
         const incompleteCount = <?= $incomplete_trips_count ?>;
+        const ongoingCount = <?= $ongoing_trips_count ?? 0 ?>;
+        
+        if (ongoingCount > 0) {
+            Swal.fire({
+                title: lang === 'id' ? '⚠️ Peringatan!' : '⚠️ Warning!',
+                text: lang === 'id' 
+                    ? `Ada ${ongoingCount} perjalanan yang belum selesai (ONGOING). Silakan selesaikan perjalanan (isi KM Akhir) terlebih dahulu.` 
+                    : `There are ${ongoingCount} ongoing trips. Please finish the trips (fill End KM) first.`,
+                icon: 'warning',
+                confirmButtonColor: '#3085d6',
+                confirmButtonText: 'OK'
+            });
+            return;
+        }
+
         if (incompleteCount > 0) {
             Swal.fire({
                 title: lang === 'id' ? '⚠️ Peringatan!' : '⚠️ Warning!',
