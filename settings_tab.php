@@ -38,6 +38,21 @@
     .chevron-right { opacity: 0.3; font-size: 1.2rem; }
 </style>
 
+<script>
+if (typeof window.toggleForm !== 'function') {
+    window.toggleForm = function(id) {
+        const f = document.getElementById(id);
+        if (!f) return;
+        if (f.style.display === 'none') {
+            f.style.display = 'block';
+        } else {
+            f.style.display = 'none';
+        }
+    };
+}
+</script>
+
+
 <div class="profile-section">
     <label for="profile_upload" class="avatar-wrapper">
         <?php if ($driver_data['profile_photo']): ?>
