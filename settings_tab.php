@@ -119,6 +119,31 @@
         <div class="chevron-right">&rsaquo;</div>
     </div>
 
+    <!-- Supervisor (Atasan) -->
+    <div class="settings-link" onclick="toggleForm('supervisor_change_form')">
+        <div class="settings-info">
+            <div class="settings-icon-box" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">👥</div>
+            <div>
+                <div class="settings-text-primary"><?= $_SESSION['lang'] == 'id' ? 'Atasan (Supervisor)' : 'Supervisor' ?></div>
+                <div class="settings-text-secondary">
+                    <?php 
+                    $current_spv = null;
+                    if (!empty($driver_data['supervisor_id'])) {
+                        foreach ($passengers as $p) {
+                            if ($p['id'] == $driver_data['supervisor_id']) {
+                                $current_spv = $p['name'];
+                                break;
+                            }
+                        }
+                    }
+                    echo htmlspecialchars($current_spv ?? __('not_set'));
+                    ?>
+                </div>
+            </div>
+        </div>
+        <div class="chevron-right">&rsaquo;</div>
+    </div>
+
     <!-- GPS Bypass Toggle -->
     <div class="settings-link" onclick="toggleGpsBypass()">
         <div class="settings-info">
@@ -190,6 +215,29 @@ document.addEventListener('DOMContentLoaded', () => {
         <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;"><?= htmlspecialchars(__('update_password_btn')) ?></button>
     </form>
 </div>
+
+<div id="supervisor_change_form" style="display:none; background: var(--card-bg); border: 1px solid var(--glass-border); border-radius: 20px; padding: 20px; margin-top: -12px; margin-bottom: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05);">
+    <form action="update_profile.php" method="POST">
+        <input type="hidden" name="action" value="update_supervisor">
+        <div style="margin-bottom: 15px;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;">
+                <?= $_SESSION['lang'] == 'id' ? 'Pilih Atasan (Supervisor)' : 'Choose Supervisor' ?>
+            </label>
+            <select name="supervisor_id" required style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary); font-size: 0.95rem;">
+                <option value=""><?= $_SESSION['lang'] == 'id' ? '-- Pilih Atasan --' : '-- Choose Supervisor --' ?></option>
+                <?php foreach ($passengers as $p): ?>
+                    <option value="<?= $p['id'] ?>" <?= ($p['id'] == ($driver_data['supervisor_id'] ?? '')) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($p['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;">
+            <?= $_SESSION['lang'] == 'id' ? 'Simpan Atasan' : 'Save Supervisor' ?>
+        </button>
+    </form>
+</div>
+
 
 <div class="settings-group" style="border-color: rgba(239, 68, 68, 0.1);">
     <div class="settings-link" onclick="if(confirm('<?= addslashes(__('confirm_logout')) ?>')) window.location.href='logout.php'">

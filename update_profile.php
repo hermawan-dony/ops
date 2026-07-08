@@ -36,6 +36,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $_SESSION['flash_error'] = 'Format nomor WA harus sesuai contoh : 6285678910112';
         }
+    } elseif (isset($_POST['action']) && $_POST['action'] === 'update_supervisor') {
+        $supervisor_id = !empty($_POST['supervisor_id']) ? (int)$_POST['supervisor_id'] : null;
+        $stmt = $pdo->prepare("UPDATE users SET supervisor_id = ? WHERE id = ?");
+        $stmt->execute([$supervisor_id, $user_id]);
+        $_SESSION['flash_success'] = $_SESSION['lang'] === 'id' ? 'Berhasil memperbarui Atasan (Supervisor).' : 'Supervisor updated successfully.';
     }
 }
 
