@@ -252,8 +252,20 @@ try {
             throw new Exception("KM End tidak boleh lebih kecil dari KM Start.");
         }
 
+        $stmt_current = $pdo->prepare("SELECT status, end_time FROM trips WHERE id = ?");
+        $stmt_current->execute([$trip_id]);
+        $current_trip = $stmt_current->fetch();
+        
+        $status_update = $current_trip['status'];
+        $end_time_update = $current_trip['end_time'];
+        
+        if ($km_end !== null && $current_trip['status'] === 'ongoing') {
+            $status_update = 'completed';
+            $end_time_update = date('Y-m-d H:i:s');
+        }
+
         if ($photo) {
-            $stmt = $pdo->prepare("UPDATE trips SET destination_id = ?, passenger_id = ?, car_id = ?, km_start = ?, km_end = ?, km_start_photo = ? WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE trips SET destination_id = ?, passenger_id = ?, car_id = ?, km_start = ?, km_end = ?, km_start_photo = ?, status = ?, end_time = ? WHERE id = ?");
             $stmt->execute([
                 $dest_id,
                 $passenger_id,
@@ -261,16 +273,20 @@ try {
                 $_POST['km_start'],
                 $km_end,
                 $photo,
+                $status_update,
+                $end_time_update,
                 $trip_id
             ]);
         } else {
-            $stmt = $pdo->prepare("UPDATE trips SET destination_id = ?, passenger_id = ?, car_id = ?, km_start = ?, km_end = ? WHERE id = ?");
+            $stmt = $pdo->prepare("UPDATE trips SET destination_id = ?, passenger_id = ?, car_id = ?, km_start = ?, km_end = ?, status = ?, end_time = ? WHERE id = ?");
             $stmt->execute([
                 $dest_id,
                 $passenger_id,
                 $_POST['car_id'],
                 $_POST['km_start'],
                 $km_end,
+                $status_update,
+                $end_time_update,
                 $trip_id
             ]);
         }
