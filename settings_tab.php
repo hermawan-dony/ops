@@ -116,7 +116,7 @@ window.toggleForm = function(id) {
     </div>
 
     <!-- WhatsApp Number -->
-    <div class="settings-link" onclick="toggleForm('wa_change_form')">
+    <div class="settings-link" onclick="openSettingsPopup('wa')">
         <div class="settings-info">
             <div class="settings-icon-box" style="background: rgba(16, 185, 129, 0.1); color: #10b981;">💬</div>
             <div>
@@ -128,7 +128,7 @@ window.toggleForm = function(id) {
     </div>
 
     <!-- Password -->
-    <div class="settings-link" onclick="toggleForm('password_change_form')">
+    <div class="settings-link" onclick="openSettingsPopup('password')">
         <div class="settings-info">
             <div class="settings-icon-box" style="background: rgba(16, 124, 16, 0.1); color: #107c10;">🔑</div>
             <div>
@@ -140,9 +140,10 @@ window.toggleForm = function(id) {
     </div>
 
     <!-- Supervisor (Atasan) -->
-    <div class="settings-link" onclick="toggleForm('supervisor_change_form')">
+    <div class="settings-link" onclick="openSettingsPopup('supervisor')">
         <div class="settings-info">
             <div class="settings-icon-box" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">👥</div>
+
             <div>
                 <div class="settings-text-primary"><?= $_SESSION['lang'] == 'id' ? 'Atasan (Supervisor)' : 'Supervisor' ?></div>
                 <div class="settings-text-secondary">
@@ -213,51 +214,99 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<div id="wa_change_form" style="display:none; background: var(--card-bg); border: 1px solid var(--glass-border); border-radius: 20px; padding: 20px; margin-top: -12px; margin-bottom: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05);">
-    <form action="update_profile.php" method="POST">
-        <input type="hidden" name="action" value="update_wa">
-        <div style="margin-bottom: 15px;">
-            <input type="text" name="wa_no" placeholder="<?= htmlspecialchars(__('wa_placeholder')) ?>" required 
-                   pattern="628[0-9]{8,15}" title="<?= htmlspecialchars(__('wa_example_title')) ?>"
-                   value="<?= htmlspecialchars($driver_data['wa_no'] ?? '') ?>"
-                   style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary);">
+<!-- Settings Popup Modal -->
+<div id="settings-popup-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; backdrop-filter: blur(4px);">
+    <div style="background: var(--card-bg); border: 1px solid var(--glass-border); border-radius: 24px; padding: 24px; width: 100%; max-width: 420px; box-sizing: border-box; position: relative; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); transition: all 0.3s ease;">
+        <button onclick="closeSettingsPopup()" style="position: absolute; top: 18px; right: 18px; background: rgba(0,0,0,0.05); border: none; font-size: 1.2rem; color: var(--text-secondary); cursor: pointer; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; line-height: 1;">&times;</button>
+        <h3 id="settings-popup-title" style="margin-top: 0; margin-bottom: 20px; font-size: 1.2rem; color: var(--text-primary); font-weight: 700;">Edit Setting</h3>
+        
+        <!-- Form WA -->
+        <div id="modal_wa_form" class="modal-form-content" style="display: none;">
+            <form action="update_profile.php" method="POST">
+                <input type="hidden" name="action" value="update_wa">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;"><?= htmlspecialchars(__('whatsapp_setting')) ?></label>
+                    <input type="text" name="wa_no" placeholder="<?= htmlspecialchars(__('wa_placeholder')) ?>" required 
+                           pattern="628[0-9]{8,15}" title="<?= htmlspecialchars(__('wa_example_title')) ?>"
+                           value="<?= htmlspecialchars($driver_data['wa_no'] ?? '') ?>"
+                           style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary); font-size: 0.95rem; box-sizing: border-box;">
+                </div>
+                <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;"><?= htmlspecialchars(__('save_wa_no')) ?></button>
+            </form>
         </div>
-        <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;"><?= htmlspecialchars(__('save_wa_no')) ?></button>
-    </form>
+
+        <!-- Form Password -->
+        <div id="modal_password_form" class="modal-form-content" style="display: none;">
+            <form action="change_password.php" method="POST">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;"><?= htmlspecialchars(__('change_password_setting')) ?></label>
+                    <input type="password" name="new_password" placeholder="<?= htmlspecialchars(__('new_password_placeholder')) ?>" required 
+                           style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary); font-size: 0.95rem; box-sizing: border-box;">
+                </div>
+                <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;"><?= htmlspecialchars(__('update_password_btn')) ?></button>
+            </form>
+        </div>
+
+        <!-- Form Supervisor -->
+        <div id="modal_supervisor_form" class="modal-form-content" style="display: none;">
+            <form action="update_profile.php" method="POST">
+                <input type="hidden" name="action" value="update_supervisor">
+                <div style="margin-bottom: 16px;">
+                    <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;">
+                        <?= $_SESSION['lang'] == 'id' ? 'Pilih Atasan (Supervisor)' : 'Choose Supervisor' ?>
+                    </label>
+                    <select name="supervisor_id" required style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary); font-size: 0.95rem; box-sizing: border-box; -webkit-appearance: none; appearance: none;">
+                        <option value=""><?= $_SESSION['lang'] == 'id' ? '-- Pilih Atasan --' : '-- Choose Supervisor --' ?></option>
+                        <?php foreach ($passengers as $p): ?>
+                            <option value="<?= $p['id'] ?>" <?= ($p['id'] == ($driver_data['supervisor_id'] ?? '')) ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($p['name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;">
+                    <?= $_SESSION['lang'] == 'id' ? 'Simpan Atasan' : 'Save Supervisor' ?>
+                </button>
+            </form>
+        </div>
+    </div>
 </div>
 
-<div id="password_change_form" style="display:none; background: var(--card-bg); border: 1px solid var(--glass-border); border-radius: 20px; padding: 20px; margin-top: -12px; margin-bottom: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05);">
-    <form action="change_password.php" method="POST">
-        <div style="margin-bottom: 15px;">
-            <input type="password" name="new_password" placeholder="<?= htmlspecialchars(__('new_password_placeholder')) ?>" required 
-                   style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary);">
-        </div>
-        <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;"><?= htmlspecialchars(__('update_password_btn')) ?></button>
-    </form>
-</div>
+<script>
+window.openSettingsPopup = function(type) {
+    const modal = document.getElementById('settings-popup-modal');
+    const titleEl = document.getElementById('settings-popup-title');
+    const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
+    
+    // Hide all forms first
+    document.querySelectorAll('.modal-form-content').forEach(el => el.style.display = 'none');
+    
+    if (type === 'wa') {
+        titleEl.textContent = lang === 'id' ? 'Ubah Nomor WhatsApp' : 'Change WhatsApp Number';
+        document.getElementById('modal_wa_form').style.display = 'block';
+    } else if (type === 'password') {
+        titleEl.textContent = lang === 'id' ? 'Ubah Kata Sandi' : 'Change Password';
+        document.getElementById('modal_password_form').style.display = 'block';
+    } else if (type === 'supervisor') {
+        titleEl.textContent = lang === 'id' ? 'Pilih Atasan (Supervisor)' : 'Choose Supervisor';
+        document.getElementById('modal_supervisor_form').style.display = 'block';
+    }
+    
+    modal.style.display = 'flex';
+};
 
-<div id="supervisor_change_form" style="display:none; background: var(--card-bg); border: 1px solid var(--glass-border); border-radius: 20px; padding: 20px; margin-top: -12px; margin-bottom: 24px; box-shadow: 0 10px 25px rgba(0,0,0,0.05);">
-    <form action="update_profile.php" method="POST">
-        <input type="hidden" name="action" value="update_supervisor">
-        <div style="margin-bottom: 15px;">
-            <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px;">
-                <?= $_SESSION['lang'] == 'id' ? 'Pilih Atasan (Supervisor)' : 'Choose Supervisor' ?>
-            </label>
-            <select name="supervisor_id" required style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary); font-size: 0.95rem;">
-                <option value=""><?= $_SESSION['lang'] == 'id' ? '-- Pilih Atasan --' : '-- Choose Supervisor --' ?></option>
-                <?php foreach ($passengers as $p): ?>
-                    <option value="<?= $p['id'] ?>" <?= ($p['id'] == ($driver_data['supervisor_id'] ?? '')) ? 'selected' : '' ?>>
-                        <?= htmlspecialchars($p['name']) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-        <button type="submit" class="btn" style="width: 100%; border-radius: 12px; padding: 12px; font-weight: 700;">
-            <?= $_SESSION['lang'] == 'id' ? 'Simpan Atasan' : 'Save Supervisor' ?>
-        </button>
-    </form>
-</div>
+window.closeSettingsPopup = function() {
+    const modal = document.getElementById('settings-popup-modal');
+    if (modal) modal.style.display = 'none';
+};
 
+// Close modal when clicking outside of the content container
+document.getElementById('settings-popup-modal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeSettingsPopup();
+    }
+});
+</script>
 
 <div class="settings-group" style="border-color: rgba(239, 68, 68, 0.1);">
     <div class="settings-link" onclick="if(confirm('<?= addslashes(__('confirm_logout')) ?>')) window.location.href='logout.php'">
@@ -272,3 +321,4 @@ document.addEventListener('DOMContentLoaded', () => {
 <div style="text-align: center; margin-top: 40px; font-size: 0.75rem; color: var(--text-secondary); opacity: 0.6; font-weight: 600; letter-spacing: 0.5px;">
     VERSION 2.0 &bull; &copy; <?= date('Y') ?> FRAMAS INDONESIA
 </div>
+
