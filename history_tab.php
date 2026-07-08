@@ -403,6 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     ${distance} KM
                                 </div>
                                 <div style="display: flex; gap: 4px;">
+                                    ${t.status === 'ongoing' ? `<span class="badge" style="font-size: 0.65rem; padding: 3px 6px; background: #fef08a; color: #854d0e; font-weight: 700; letter-spacing: 0.02em;">${lang === 'id' ? 'ONGOING' : 'ONGOING'}</span>` : ''}
                                     <span class="badge" style="font-size: 0.65rem; padding: 3px 6px; background: ${passBg}; color: ${passColor}; font-weight: 700; letter-spacing: 0.02em;">
                                         ${passText}
                                     </span>
@@ -644,9 +645,12 @@ document.addEventListener('DOMContentLoaded', () => {
                                             ${expensesHtml}
                                         </td>
                                         <td style="padding: 10px 8px; vertical-align: top;">
-                                            <span class="badge" style="font-size: 0.65rem; padding: 3px 6px; background: ${passBg}; color: ${passColor}; font-weight: 700; letter-spacing: 0.02em; display: inline-block;">
-                                                ${passText}
-                                            </span>
+                                            <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                                                ${t.status === 'ongoing' ? `<span class="badge" style="font-size: 0.65rem; padding: 3px 6px; background: #fef08a; color: #854d0e; font-weight: 700; border-radius: 4px;">${lang === 'id' ? 'ONGOING' : 'ONGOING'}</span>` : ''}
+                                                <span class="badge" style="font-size: 0.65rem; padding: 3px 6px; background: ${passBg}; color: ${passColor}; font-weight: 700; letter-spacing: 0.02em; display: inline-block;">
+                                                    ${passText}
+                                                </span>
+                                            </div>
                                         </td>
                                         <td style="padding: 10px 8px; vertical-align: top;">
                                             <div style="display: flex; flex-direction: column; gap: 4px; width: 80px;">
