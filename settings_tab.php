@@ -258,6 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <select name="supervisor_id" required style="width: 100%; padding: 12px; border-radius: 12px; border: 1px solid var(--glass-border); background: var(--bg-color); color: var(--text-primary); font-size: 0.95rem; box-sizing: border-box; -webkit-appearance: none; appearance: none;">
                         <option value=""><?= $_SESSION['lang'] == 'id' ? '-- Pilih Atasan --' : '-- Choose Supervisor --' ?></option>
                         <?php foreach ($passengers as $p): ?>
+                            <?php if ($p['name'] === '?') continue; ?>
                             <option value="<?= $p['id'] ?>" <?= ($p['id'] == ($driver_data['supervisor_id'] ?? '')) ? 'selected' : '' ?>>
                                 <?= htmlspecialchars($p['name']) ?>
                             </option>
