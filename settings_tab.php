@@ -39,17 +39,22 @@
 </style>
 
 <script>
-if (typeof window.toggleForm !== 'function') {
-    window.toggleForm = function(id) {
-        const f = document.getElementById(id);
-        if (!f) return;
-        if (f.style.display === 'none') {
-            f.style.display = 'block';
-        } else {
-            f.style.display = 'none';
-        }
-    };
-}
+window.toggleForm = function(id) {
+    const f = document.getElementById(id);
+    if (!f) return;
+    if (f.classList.contains('show') || f.style.display === 'block') {
+        f.classList.remove('show');
+        f.style.display = 'none';
+    } else {
+        f.classList.add('show');
+        f.style.display = 'block';
+        
+        // auto scroll to form
+        setTimeout(() => {
+            f.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 100);
+    }
+};
 </script>
 
 
