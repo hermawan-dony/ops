@@ -2,6 +2,20 @@
 // Set session lifetime to 30 days (30 * 24 * 60 * 60 seconds)
 ini_set('session.cookie_lifetime', 2592000);
 ini_set('session.gc_maxlifetime', 2592000);
+
+// Support MS Teams iframe embedding by allowing SameSite=None and Secure cookies
+$is_secure = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') 
+             || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+             || (isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] === 'ops.framas.co.id');
+
+if ($is_secure) {
+    ini_set('session.cookie_secure', '1');
+    ini_set('session.cookie_samesite', 'None');
+}
+
+// Allow framing in MS Teams and Office 365, overriding default X-Frame-Options in modern browsers
+header_remove('X-Frame-Options');
+header("Content-Security-Policy: frame-ancestors 'self' https://teams.microsoft.com https://*.teams.microsoft.com https://*.office.com https://*.office365.com;");
 session_start();
 
 // Set timezone to Asia/Jakarta
