@@ -1018,23 +1018,19 @@ if ($hour >= 4 && $hour < 12) {
                         </div>
                     </form>
 
-                    <!-- Profile Form -->
-                    <form action="" method="POST">
-                        <input type="hidden" name="action" value="update_profile">
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 700; font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Nama Lengkap' : 'Full Name' ?></label>
-                            <input type="text" class="form-input" value="<?= htmlspecialchars($passenger_info['name'] ?? '') ?>" disabled style="background: #f1f5f9; cursor: not-allowed; font-weight: 600;">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 700; font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Nomor WhatsApp' : 'WhatsApp Number' ?></label>
-                            <input type="text" class="form-input" value="<?= htmlspecialchars($passenger_info['wa_no'] ?? '') ?>" disabled style="background: #f1f5f9; cursor: not-allowed; font-weight: 600;">
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" style="font-weight: 700; font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Alamat Email' : 'Email Address' ?></label>
-                            <input type="email" name="email" class="form-input" value="<?= htmlspecialchars($passenger_info['email'] ?? '') ?>" placeholder="e.g. user@framas.co.id" style="font-weight: 600;" required>
-                        </div>
-                        <button type="submit" class="btn-submit" style="width: 100%; border: none; padding: 12px; border-radius: 8px; font-weight: 700; cursor: pointer;"><?= $lang === 'id' ? 'Simpan Profil' : 'Save Profile' ?></button>
-                    </form>
+                    <!-- Profile View (Read Only) -->
+                    <div class="form-group">
+                        <label class="form-label" style="font-weight: 700; font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Nama Lengkap' : 'Full Name' ?></label>
+                        <input type="text" class="form-input" value="<?= htmlspecialchars($passenger_info['name'] ?? '') ?>" disabled style="background: #f1f5f9; cursor: not-allowed; font-weight: 600;">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" style="font-weight: 700; font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Nomor WhatsApp' : 'WhatsApp Number' ?></label>
+                        <input type="text" class="form-input" value="<?= htmlspecialchars($passenger_info['wa_no'] ?? '') ?>" disabled style="background: #f1f5f9; cursor: not-allowed; font-weight: 600;">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label" style="font-weight: 700; font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Alamat Email' : 'Email Address' ?></label>
+                        <input type="email" class="form-input" value="<?= htmlspecialchars($passenger_info['email'] ?? '') ?>" disabled style="background: #f1f5f9; cursor: not-allowed; font-weight: 600;">
+                    </div>
                 </div>
 
                 <!-- Right Card: Change PIN -->
