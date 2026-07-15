@@ -172,6 +172,7 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
     <meta charset="UTF-8">
     <meta name="google" content="notranslate">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="icon.png">
     <title>Passenger Portal - <?= htmlspecialchars(__('app_name')) ?></title>
     
     <!-- PWA Setup -->
@@ -188,113 +189,118 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
         }
     </script>
 
-    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         :root {
-            --login-bg: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            --card-bg: rgba(255, 255, 255, 0.95);
-            --accent-gradient: linear-gradient(135deg, #118DFF 0%, #0078d4 100%);
-            --text-main: #1e293b;
+            --login-bg: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.98) 100%), url('corporate_banner.png');
+            --card-bg: rgba(255, 255, 255, 0.94);
+            --accent-color: #2563eb;
+            --text-main: #0f172a;
             --text-muted: #64748b;
+            --border-color: #e2e8f0;
         }
         body {
             background: var(--login-bg);
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
             min-height: 100vh;
             display: flex; align-items: center; justify-content: center;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Plus Jakarta Sans', 'Segoe UI', sans-serif;
             margin: 0; padding: 20px;
             box-sizing: border-box;
         }
         .login-card {
             max-width: 420px; width: 100%;
             background: var(--card-bg);
-            border-radius: 28px;
+            border-radius: 20px;
             padding: 44px 36px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.15);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.5);
             text-align: center;
             animation: fadeInUp 0.5s ease-out;
         }
         @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
+            from { opacity: 0; transform: translateY(16px); }
             to { opacity: 1; transform: translateY(0); }
         }
         .logo-box {
-            width: 84px; height: 84px;
-            margin: 0 auto 20px auto;
-            background: linear-gradient(135deg, rgba(17,141,255,0.1) 0%, rgba(0,120,212,0.1) 100%);
-            border-radius: 24px;
+            width: 80px; height: 80px;
+            margin: 0 auto 24px auto;
+            background: rgba(37, 99, 235, 0.08);
+            border-radius: 20px;
             display: flex; align-items: center; justify-content: center;
-            border: 1px solid rgba(17, 141, 255, 0.2);
+            border: 1px solid rgba(37, 99, 235, 0.15);
         }
-        .logo-icon { font-size: 2.5rem; }
-        .app-title { font-size: 1.7rem; font-weight: 800; color: var(--text-main); margin-bottom: 6px; letter-spacing: -0.5px; }
-        .app-subtitle { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 36px; text-transform: uppercase; letter-spacing: 2px; font-weight: 700; }
+        .logo-icon { font-size: 2.2rem; }
+        .app-title { font-size: 1.6rem; font-weight: 800; color: var(--text-main); margin-bottom: 6px; letter-spacing: -0.5px; font-family: 'Outfit', sans-serif; }
+        .app-subtitle { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 36px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 700; }
         
         .form-group { margin-bottom: 22px; text-align: left; position: relative; }
-        .form-label { display: block; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .form-label { display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em; }
         .form-input {
-            width: 100%; padding: 14px 16px;
-            background: rgba(0,0,0,0.02);
-            border: 1px solid rgba(0,0,0,0.08);
-            border-radius: 12px;
+            width: 100%; padding: 12px 16px;
+            background: #f8fafc;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
             color: var(--text-main);
-            font-size: 0.98rem;
+            font-size: 0.95rem;
             box-sizing: border-box;
-            transition: all 0.25s ease;
+            transition: all 0.2s ease;
             font-family: inherit;
         }
-        .form-input:focus { outline: none; border-color: #118DFF; box-shadow: 0 0 0 4px rgba(17, 141, 255, 0.15); background: #fff; }
+        .form-input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12); background: #fff; }
         
         .login-btn {
-            width: 100%; padding: 15px;
-            background: var(--accent-gradient);
-            color: #fff; border: none; border-radius: 14px;
-            font-size: 1rem; font-weight: 700; cursor: pointer;
-            box-shadow: 0 8px 16px -3px rgba(17, 141, 255, 0.35);
+            width: 100%; padding: 14px;
+            background: var(--accent-color);
+            color: #fff; border: none; border-radius: 10px;
+            font-size: 0.95rem; font-weight: 700; cursor: pointer;
+            box-shadow: 0 4px 6px rgba(37, 99, 235, 0.15);
             transition: all 0.2s;
             margin-top: 10px;
+            font-family: inherit;
         }
-        .login-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 20px -3px rgba(17, 141, 255, 0.45); }
+        .login-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 12px rgba(37, 99, 235, 0.25); }
         .login-btn:active { transform: translateY(0); }
         
         /* Searchable Autocomplete List */
         .searchable-select { position: relative; }
         .dropdown-list {
             position: absolute; top: 100%; left: 0; right: 0;
-            background: #fff; border-radius: 14px; margin-top: 8px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+            background: #fff; border-radius: 12px; margin-top: 8px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
             max-height: 200px; overflow-y: auto; z-index: 1000;
-            display: none; border: 1px solid rgba(0,0,0,0.06);
+            display: none; border: 1px solid var(--border-color);
             padding: 6px 0;
         }
         .dropdown-item {
-            padding: 12px 18px; cursor: pointer; color: var(--text-main); font-size: 0.95rem; text-align: left;
+            padding: 12px 18px; cursor: pointer; color: var(--text-main); font-size: 0.92rem; text-align: left;
             transition: background 0.15s;
         }
-        .dropdown-item:hover { background: rgba(17, 141, 255, 0.06); color: #118DFF; }
+        .dropdown-item:hover { background: rgba(37, 99, 235, 0.05); color: var(--accent-color); }
         
         .pin-container { display: none; margin-top: 24px; animation: fadeIn 0.4s ease; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-
-        .error-banner { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 12px 16px; border-radius: 12px; font-size: 0.85rem; margin-bottom: 24px; font-weight: 600; text-align: left; }
+ 
+        .error-banner { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 12px 16px; border-radius: 10px; font-size: 0.85rem; margin-bottom: 24px; font-weight: 600; text-align: left; }
         
         .forgot-link {
             display: inline-block;
             margin-top: 12px;
-            color: #64748b;
+            color: var(--text-muted);
             text-decoration: none;
-            font-size: 0.82rem;
+            font-size: 0.8rem;
             font-weight: 600;
             transition: color 0.15s;
         }
-        .forgot-link:hover { color: #118DFF; text-decoration: underline; }
-
-        .footer-note { font-size: 0.78rem; color: var(--text-muted); margin-top: 32px; font-weight: 600; }
-        .back-link { display: inline-block; color: #118DFF; text-decoration: none; font-weight: 700; transition: color 0.15s; }
-        .back-link:hover { color: #0078d4; }
+        .forgot-link:hover { color: var(--accent-color); text-decoration: underline; }
+ 
+        .footer-note { font-size: 0.8rem; color: var(--text-muted); margin-top: 32px; font-weight: 600; }
+        .back-link { display: inline-block; color: var(--accent-color); text-decoration: none; font-weight: 700; transition: color 0.15s; }
+        .back-link:hover { opacity: 0.85; }
     </style>
 </head>
 <body>
@@ -317,8 +323,8 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
                 <input type="hidden" name="action" value="reset_pin">
 
                 <div class="form-group">
-                    <label class="form-label">Enter New PIN (6-digit number)</label>
-                    <input type="password" name="pin" class="form-input" placeholder="******" pattern="\d{6}" maxlength="6" inputmode="numeric" required autofocus>
+                    <label class="form-label">Enter New PIN (4-digit number)</label>
+                    <input type="password" name="pin" class="form-input" placeholder="****" pattern="\d{4}" maxlength="4" inputmode="numeric" required autofocus>
                 </div>
                 <button type="submit" class="login-btn">Save PIN & Login</button>
             </form>
@@ -350,7 +356,7 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
                 <div class="pin-container" id="pinContainer">
                     <div class="form-group">
                         <label class="form-label" id="pinLabel">Security PIN</label>
-                        <input type="password" name="pin" id="pinInput" class="form-input" placeholder="******" pattern="\d{6}" maxlength="6" inputmode="numeric">
+                        <input type="password" name="pin" id="pinInput" class="form-input" placeholder="****" pattern="\d{4}" maxlength="4" inputmode="numeric">
                         <div style="text-align: right;" id="forgotPinBox">
                             <a href="#" class="forgot-link" onclick="handleForgotPin(event)">Forgot PIN?</a>
                         </div>
@@ -415,12 +421,18 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
                     pinInput.focus();
 
                     if (hasPin) {
-                        pinLabel.innerText = "Enter your 6-digit PIN";
+                        pinLabel.innerText = "Enter your PIN";
+                        pinInput.placeholder = "••••";
+                        pinInput.maxLength = 6;
+                        pinInput.pattern = "\\d{4,6}";
                         submitBtn.innerText = "Login";
                         formAction.value = "login";
                         forgotPinBox.style.display = 'block';
                     } else {
-                        pinLabel.innerText = "Create New 6-digit Security PIN";
+                        pinLabel.innerText = "Create New 4-digit Security PIN";
+                        pinInput.placeholder = "****";
+                        pinInput.maxLength = 4;
+                        pinInput.pattern = "\\d{4}";
                         submitBtn.innerText = "Save PIN & Login";
                         formAction.value = "setup";
                         forgotPinBox.style.display = 'none';
