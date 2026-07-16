@@ -729,9 +729,10 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                                       destName.includes(searchQuery) || 
                                       txId.includes(searchQuery);
 
+                const allApproved = (r.expense_details || []).every(e => e.approval_status === 'approved');
                 const matchesStatus = (filterStatus === 'all') || 
-                                      (filterStatus === 'approved' && r.passenger_approval === 'approved') ||
-                                      (filterStatus === 'pending' && r.passenger_approval !== 'approved');
+                                      (filterStatus === 'approved' && allApproved) ||
+                                      (filterStatus === 'pending' && !allApproved);
 
                 return matchesSearch && matchesStatus;
             });
