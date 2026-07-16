@@ -9,7 +9,7 @@ $driver_id = $_POST['driver_id'] ?? 'ALL';
 $start_date = $_POST['start_date'] ?? date('Y-m-01');
 $end_date = $_POST['end_date'] ?? date('Y-m-d');
 
-$sql = "SELECT t.*, s.shift_date, u.full_name as driver_name, c.car_no, d.name as dest_name, p.name as pass_name, s.approval_status as admin_approval,
+$sql = "SELECT t.*, s.shift_date, s.driver_id, u.full_name as driver_name, c.car_no, d.name as dest_name, p.name as pass_name, s.approval_status as admin_approval,
         (SELECT SUM(amount) FROM trip_expenses WHERE trip_id = t.id AND expense_type = 'gasoline') as gas_amt,
         (SELECT SUM(litre) FROM trip_expenses WHERE trip_id = t.id AND expense_type = 'gasoline') as gas_litre,
         (SELECT SUM(amount) FROM trip_expenses WHERE trip_id = t.id AND expense_type = 'toll') as toll_amt,
@@ -39,7 +39,7 @@ $data = $stmt->fetchAll();
 
 // Add expense details (photos) for each trip
 foreach ($data as &$row) {
-    $stmt_exp = $pdo->prepare("SELECT expense_type, amount, photo, created_at FROM trip_expenses WHERE trip_id = ?");
+    $stmt_exp = $pdo->prepare("SELECT id, expense_type, amount, photo, supervisor_note, approval_status, created_at FROM trip_expenses WHERE trip_id = ?");
     $stmt_exp->execute([$row['id']]);
     $row['expense_details'] = $stmt_exp->fetchAll();
 }

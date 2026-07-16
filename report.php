@@ -11,15 +11,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $trip_id = intval($_POST['trip_id']);
         $start_time = $_POST['start_time'];
         $end_time = $_POST['end_time'] ? $_POST['end_time'] : null;
-        $passenger_approval = $_POST['passenger_approval'];
-        $passenger_feedback = $_POST['passenger_feedback'];
         
-        $stmt = $pdo->prepare("UPDATE trips 
-                               SET start_time = ?, end_time = ?, passenger_approval = ?, passenger_feedback = ? 
-                               WHERE id = ?");
-        $stmt->execute([$start_time, $end_time, $passenger_approval, $passenger_feedback, $trip_id]);
+        // 1. Update trip times
+        $stmt = $pdo->prepare("UPDATE trips SET start_time = ?, end_time = ? WHERE id = ?");
+        $stmt->execute([$start_time, $end_time, $trip_id]);
         
-        header("Location: report.php?msg=" . urlencode("Trip TX-{$trip_id} updated successfully"));
+        // 2. Process expenses if submitted
+        $expense_types = $_POST['expense_type'] ?? [];
+        $expense_amounts = $_POST['expense_amount'] ?? [];
+        $expense_litres = $_POST['expense_litre'] ?? [];
+        $expense_notes = $_POST['expense_note'] ?? [];
+        $expense_approved = $_POST['expense_approved'] ?? [];
+        
+        // Load all expenses for this trip to see if they are all approved
+        $stmt_check_exp = $pdo->prepare("SELECT id FROM trip_expenses WHERE trip_id = ?");
+        $stmt_check_exp->execute([$trip_id]);
+        $all_expenses = $stmt_check_exp->fetchAll(PDO::FETCH_ASSOC);
+        
+        $total_expenses_count = count($all_expenses);
+        $approved_count = 0;
+        
+        foreach ($all_expenses as $exp) {
+            $exp_id = $exp['id'];
+            if (isset($expense_types[$exp_id])) {
+                $type = $expense_types[$exp_id];
+                $amt = floatval($expense_amounts[$exp_id] ?? 0);
+                $lit = ($type === 'gasoline') ? floatval($expense_litres[$exp_id] ?? null) : null;
+                $note = $expense_notes[$exp_id] ?? '';
+                
+                $status = isset($expense_approved[$exp_id]) ? 'approved' : 'pending';
+                $approved_by = isset($expense_approved[$exp_id]) ? 'Admin' : null;
+                $approved_at = isset($expense_approved[$exp_id]) ? date('Y-m-d H:i:s') : null;
+                
+                if ($status === 'approved') {
+                    $approved_count++;
+                }
+                
+                $stmt_up = $pdo->prepare("UPDATE trip_expenses 
+                                          SET expense_type = ?, amount = ?, litre = ?, supervisor_note = ?, 
+                                              approval_status = ?, approved_by_name = ?, approved_at = ? 
+                                          WHERE id = ?");
+                $stmt_up->execute([$type, $amt, $lit, $note, $status, $approved_by, $approved_at, $exp_id]);
+            }
+        }
+        
+        // 3. Set passenger_approval to 'approved' if all expenses are approved (or if there are no expenses at all)
+        $trip_status = ($approved_count === $total_expenses_count) ? 'approved' : 'pending';
+        $trip_feedback = ($approved_count === $total_expenses_count) ? 'Approved by Admin' : '';
+        
+        $stmt_trip_up = $pdo->prepare("UPDATE trips SET passenger_approval = ?, passenger_feedback = ? WHERE id = ?");
+        $stmt_trip_up->execute([$trip_status, $trip_feedback, $trip_id]);
+        
+        header("Location: report.php?msg=" . urlencode("Trip TX-{$trip_id} and expenses updated successfully"));
         exit;
     } elseif ($_POST['action'] === 'edit_expense_admin') {
         $expense_id = intval($_POST['expense_id']);
@@ -38,6 +81,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $expense_id = intval($_POST['expense_id']);
             $stmt = $pdo->prepare("UPDATE trip_expenses SET approval_status = 'approved', approved_by_name = ?, approved_at = CURRENT_TIMESTAMP WHERE id = ?");
             $stmt->execute(['Admin', $expense_id]);
+            echo json_encode(['success' => true]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    } elseif ($_POST['action'] === 'approve_group_admin') {
+        header('Content-Type: application/json');
+        try {
+            $driver_id = intval($_POST['driver_id']);
+            $shift_date = $_POST['shift_date'];
+            
+            // 1. Get all completed trips for this driver on this date
+            $stmt = $pdo->prepare("
+                SELECT t.id 
+                FROM trips t
+                JOIN shifts s ON t.shift_id = s.id
+                WHERE s.driver_id = ? AND s.shift_date = ? AND t.status = 'completed'
+            ");
+            $stmt->execute([$driver_id, $shift_date]);
+            $trip_ids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            
+            if (!empty($trip_ids)) {
+                $in_clause = implode(',', array_fill(0, count($trip_ids), '?'));
+                
+                // 2. Approve all expenses for these trips
+                $stmt_exp = $pdo->prepare("
+                    UPDATE trip_expenses 
+                    SET approval_status = 'approved', approved_by_name = 'Admin', approved_at = CURRENT_TIMESTAMP 
+                    WHERE trip_id IN ($in_clause)
+                ");
+                $stmt_exp->execute(array_merge($trip_ids));
+                
+                // 3. Approve the trips themselves (passenger_approval = 'approved')
+                $stmt_trips = $pdo->prepare("
+                    UPDATE trips 
+                    SET passenger_approval = 'approved', passenger_feedback = 'Approved by Admin' 
+                    WHERE id IN ($in_clause)
+                ");
+                $stmt_trips->execute(array_merge($trip_ids));
+            }
+            
             echo json_encode(['success' => true]);
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
@@ -93,6 +177,7 @@ $theme = $_SESSION['theme'] ?? 'light';
 // Fetch pending counts
 $pending_trips_count = $pdo->query("SELECT COUNT(*) FROM trips WHERE passenger_approval = 'pending' AND status = 'completed'")->fetchColumn() ?: 0;
 $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_status = 'pending' AND status = 'completed'")->fetchColumn() ?: 0;
+$mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting_key = 'mandatory_photo'")->fetchColumn() ?: '1';
 ?>
 <!DOCTYPE html>
 <html lang="<?php echo $_SESSION['lang']; ?>" class="<?php echo $theme === 'dark' ? 'dark-mode' : ''; ?>">
@@ -180,36 +265,7 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
 </head>
 <body class="<?php echo $is_collapsed ? 'collapsed' : ''; ?>">
 
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <div class="sidebar-brand">Transport Overview</div>
-            <div class="toggle-btn" onclick="toggleSidebar()">☰</div>
-        </div>
-        <nav style="padding: 10px 0;">
-            <a href="admin.php" class="nav-item"><div class="nav-icon">📊</div><span>Dashboard</span></a>
-            <a href="master_data.php" class="nav-item"><div class="nav-icon">📁</div><span><?php echo __('master_data'); ?></span></a>
-            <a href="report.php" class="nav-item active"><div class="nav-icon">📝</div><span><?php echo __('reports'); ?></span></a>
-            <a href="attendance_report.php" class="nav-item"><div class="nav-icon">⏰</div><span><?php echo __('attendance'); ?></span></a>
-            <a href="docs.php" class="nav-item" target="_blank"><div class="nav-icon" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">📖</div><span>Manual</span></a>
-        </nav>
-        
-        <div class="lang-theme-footer">
-            <div style="font-size: 0.7rem; color: #999; margin-bottom: 10px; font-weight: 700;">PREFERENCES</div>
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <a href="?lang=en" style="text-decoration:none; color: <?php echo $_SESSION['lang']=='en'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">EN</a>
-                <a href="?lang=id" style="text-decoration:none; color: <?php echo $_SESSION['lang']=='id'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">ID</a>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <a href="?theme=light" style="text-decoration:none; font-size: 0.75rem; color: <?php echo $theme=='light'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">LIGHT</a>
-                <a href="?theme=dark" style="text-decoration:none; font-size: 0.75rem; color: <?php echo $theme=='dark'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">DARK</a>
-            </div>
-            
-            <div style="margin-top: 20px; border-top: 1px dashed var(--glass-border); padding-top: 15px;">
-                <a href="admin_password.php" style="display:block; color: var(--pbi-blue); text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">🔑 Ganti Password</a>
-                <a href="login.php" style="display:block; color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 700;">Logout</a>
-            </div>
-        </div>
-    </div>
+    <?php include 'sidemenu.php'; ?>
 
     <div class="main-content">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 16px;">
@@ -321,8 +377,29 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                     </div>
                 </div>
 
+                <!-- Mini Dashboard Cards -->
+                <div style="display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 150px; background: var(--bg-color); border: 1px solid var(--glass-border); padding: 15px; border-radius: 10px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;"><?= $_SESSION['lang'] === 'id' ? 'Total Transaksi' : 'Total Transactions' ?></span>
+                        <strong id="dash-total-tx" style="font-size: 1.5rem; color: var(--text-primary);">0</strong>
+                    </div>
+                    <div id="dash-unchecked-card" onclick="filterUncheckedOnly()" style="flex: 1; min-width: 150px; background: rgba(225, 29, 72, 0.05); border: 1px solid rgba(225, 29, 72, 0.2); padding: 15px; border-radius: 10px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 4px; cursor: pointer; transition: transform 0.15s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                        <span style="font-size: 0.75rem; color: #e11d48; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; gap: 4px;">⚠️ <?= $_SESSION['lang'] === 'id' ? 'Belum Dicek' : 'Unchecked (Pending)' ?></span>
+                        <strong id="dash-unchecked-tx" style="font-size: 1.5rem; color: #e11d48;">0</strong>
+                    </div>
+                    <div style="flex: 1; min-width: 150px; background: var(--bg-color); border: 1px solid var(--glass-border); padding: 15px; border-radius: 10px; box-shadow: var(--card-shadow); display: flex; flex-direction: column; gap: 4px;">
+                        <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;"><?= $_SESSION['lang'] === 'id' ? 'Total Biaya' : 'Total Expenses' ?></span>
+                        <strong id="dash-total-cost" style="font-size: 1.5rem; color: #107c10;">Rp 0</strong>
+                    </div>
+                </div>
+
                 <!-- Interactive controls for reports table -->
                 <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; background: rgba(0,0,0,0.02); padding: 8px; border-radius: 6px; border: 1px solid var(--glass-border); align-items: center;">
+                    <select id="report-view-mode" onchange="renderReportTable()" style="flex: 0.8; min-width: 150px; padding: 6px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary); font-weight: bold;">
+                        <option value="detail"><?= $_SESSION['lang'] == 'id' ? '🔍 Detail Transaksi' : '🔍 Transaction Details' ?></option>
+                        <option value="group"><?= $_SESSION['lang'] == 'id' ? '📦 Grup: Driver & Tanggal' : '📦 Group: Driver & Date' ?></option>
+                    </select>
+
                     <input type="text" id="report-search" placeholder="Search driver, passenger, destination, TX-ID..." style="flex: 1.5; min-width: 160px; padding: 6px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                     
                     <select id="report-sort" style="flex: 1; min-width: 120px; padding: 6px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
@@ -334,16 +411,16 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                         <option value="cost_asc">Cost: Low to High</option>
                     </select>
                     
-                    <select id="report-filter-status" style="flex: 1; min-width: 120px; padding: 6px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
-                        <option value="all">All Approval Status</option>
-                        <option value="approved">Approved</option>
-                        <option value="pending">Pending</option>
+                    <select id="report-filter-status" onchange="renderReportTable()" style="flex: 1; min-width: 120px; padding: 6px 8px; font-size: 0.8rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                        <option value="all"><?= $_SESSION['lang'] == 'id' ? 'Semua Status Cek' : 'All Status' ?></option>
+                        <option value="approved"><?= $_SESSION['lang'] == 'id' ? 'Sudah Dicek (Approved)' : 'Checked (Approved)' ?></option>
+                        <option value="pending"><?= $_SESSION['lang'] == 'id' ? 'Belum Dicek (Pending)' : 'Unchecked (Pending)' ?></option>
                     </select>
                 </div>
 
                 <div style="overflow-x: auto;">
                     <table class="pbi-table" id="reportTable">
-                        <thead>
+                        <thead id="reportHeader">
                             <tr>
                                 <th rowspan="2">TX ID</th>
                                 <th rowspan="2">Driver</th>
@@ -352,7 +429,8 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                                 <th colspan="3">Km</th>
                                 <th rowspan="2">Litre</th>
                                 <th colspan="4">Amount</th>
-                                <th rowspan="2">Approved</th>
+                                <th rowspan="2">Passenger</th>
+                                <th rowspan="2">Checked</th>
                                 <th rowspan="2">Place</th>
                             </tr>
                             <tr>
@@ -485,18 +563,11 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                     <input type="datetime-local" name="end_time" id="edit_end_time" class="pbi-input">
                 </div>
                 
-                <div style="margin-bottom: 15px;">
-                    <label class="pbi-label">Passenger Approval Status</label>
-                    <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-color); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--glass-border);">
-                        <span id="edit_passenger_approval_text" style="font-weight: bold;">Pending</span>
-                        <input type="hidden" name="passenger_approval" id="edit_passenger_approval">
-                        <button type="button" id="adminApproveBtn" onclick="setAdminApproved()" class="btn-export" style="background: #166534; font-size: 0.75rem; padding: 6px 12px; margin: 0; display: none;">Approve by Admin</button>
-                    </div>
-                </div>
-                
                 <div style="margin-bottom: 20px;">
-                    <label class="pbi-label">Approval Feedback / Note</label>
-                    <textarea name="passenger_feedback" id="edit_passenger_feedback" class="pbi-input" style="height: 60px; resize: vertical;"></textarea>
+                    <label class="pbi-label" style="font-weight: 700; border-bottom: 1px solid var(--glass-border); padding-bottom: 6px; margin-bottom: 12px; display: block; color: var(--text-primary);">Expenses / Biaya Transaksi</label>
+                    <div id="modal_expenses_list" style="display: flex; flex-direction: column; gap: 12px; max-height: 280px; overflow-y: auto; padding-right: 4px;">
+                        <!-- Populate dynamically in JS -->
+                    </div>
                 </div>
                 
                 <div style="display: flex; gap: 8px;">
@@ -512,6 +583,8 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
     </div>
 
     <script>
+        const mandatoryPhoto = "<?= $mandatory_photo ?>";
+
         function toggleSidebar() {
             document.body.classList.toggle('collapsed');
             fetch('manage_admin_action.php?action=toggle_sidebar');
@@ -572,6 +645,77 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             const searchQuery = document.getElementById('report-search').value.toLowerCase().trim();
             const sortValue = document.getElementById('report-sort').value;
             const filterStatus = document.getElementById('report-filter-status').value;
+            const viewMode = document.getElementById('report-view-mode').value;
+            const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
+
+            // Update Dashboard Counters based on currentData (all loaded records)
+            const totalTx = currentData.length;
+            const uncheckedTx = currentData.filter(r => {
+                return !(r.expense_details || []).every(e => e.approval_status === 'approved');
+            }).length;
+            const totalCost = currentData.reduce((sum, r) => {
+                return sum + (parseFloat(r.gas_amt) || 0) + (parseFloat(r.toll_amt) || 0) + (parseFloat(r.others_amt) || 0) + (parseFloat(r.parking_amt) || 0) + (parseFloat(r.lunch_amt) || 0);
+            }, 0);
+
+            document.getElementById('dash-total-tx').innerText = totalTx;
+            document.getElementById('dash-unchecked-tx').innerText = uncheckedTx;
+            document.getElementById('dash-total-cost').innerText = 'Rp ' + totalCost.toLocaleString();
+            
+            const uncheckedCard = document.getElementById('dash-unchecked-card');
+            if (uncheckedCard) {
+                if (uncheckedTx > 0) {
+                    uncheckedCard.style.background = 'rgba(225, 29, 72, 0.08)';
+                    uncheckedCard.style.borderColor = '#e11d48';
+                    uncheckedCard.querySelector('span').style.color = '#e11d48';
+                    uncheckedCard.querySelector('strong').style.color = '#e11d48';
+                    uncheckedCard.querySelector('span').innerHTML = '⚠️ ' + (lang === 'id' ? 'Belum Dicek' : 'Unchecked (Pending)');
+                } else {
+                    uncheckedCard.style.background = 'rgba(16, 185, 129, 0.05)';
+                    uncheckedCard.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+                    uncheckedCard.querySelector('span').style.color = '#10b981';
+                    uncheckedCard.querySelector('strong').style.color = '#10b981';
+                    uncheckedCard.querySelector('span').innerHTML = '✔ ' + (lang === 'id' ? 'Semua Beres' : 'All Checked');
+                }
+            }
+
+            // Update Table Header based on View Mode
+            const headerEl = document.getElementById('reportHeader');
+            if (viewMode === 'group') {
+                headerEl.innerHTML = `
+                    <tr>
+                        <th rowspan="2">${lang === 'id' ? 'Driver' : 'Driver'}</th>
+                        <th rowspan="2">${lang === 'id' ? 'Tanggal' : 'Date'}</th>
+                        <th rowspan="2">${lang === 'id' ? 'Total Trip' : 'Total Trips'}</th>
+                        <th colspan="4">${lang === 'id' ? 'Rincian Pengeluaran' : 'Expenses Breakdown'}</th>
+                        <th rowspan="2">${lang === 'id' ? 'Total Biaya' : 'Total Cost'}</th>
+                        <th rowspan="2">${lang === 'id' ? 'Checked' : 'Checked'}</th>
+                        <th rowspan="2">${lang === 'id' ? 'Tindakan' : 'Actions'}</th>
+                    </tr>
+                    <tr>
+                        <th>Gasoline</th><th>Toll</th><th>Others</th><th>Lunch</th>
+                    </tr>
+                `;
+            } else {
+                headerEl.innerHTML = `
+                    <tr>
+                        <th rowspan="2">TX ID</th>
+                        <th rowspan="2">Driver</th>
+                        <th rowspan="2">Date</th>
+                        <th colspan="2">Time</th>
+                        <th colspan="3">Km</th>
+                        <th rowspan="2">Litre</th>
+                        <th colspan="4">Amount</th>
+                        <th rowspan="2">Passenger</th>
+                        <th rowspan="2">Checked</th>
+                        <th rowspan="2">Place</th>
+                    </tr>
+                    <tr>
+                        <th>In</th><th>Out</th>
+                        <th>In</th><th>Out</th><th>Total</th>
+                        <th>Gasoline</th><th>Toll</th><th>Others</th><th>Lunch</th>
+                    </tr>
+                `;
+            }
 
             // 1. Filter
             let filtered = currentData.filter(r => {
@@ -592,71 +736,163 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                 return matchesSearch && matchesStatus;
             });
 
-            // 2. Sort
-            filtered.sort((a, b) => {
-                const getTripCost = (t) => {
-                    return (parseFloat(t.gas_amt) || 0) + (parseFloat(t.toll_amt) || 0) + (parseFloat(t.others_amt) || 0) + (parseFloat(t.parking_amt) || 0) + (parseFloat(t.lunch_amt) || 0);
-                };
-                
-                if (sortValue === 'date_desc') {
-                    return new Date(b.start_time) - new Date(a.start_time);
-                } else if (sortValue === 'date_asc') {
-                    return new Date(a.start_time) - new Date(b.start_time);
-                } else if (sortValue === 'dist_desc') {
-                    const distA = a.km_end ? (a.km_end - a.km_start) : 0;
-                    const distB = b.km_end ? (b.km_end - b.km_start) : 0;
-                    return distB - distA;
-                } else if (sortValue === 'dist_asc') {
-                    const distA = a.km_end ? (a.km_end - a.km_start) : 0;
-                    const distB = b.km_end ? (b.km_end - b.km_start) : 0;
-                    return distA - distB;
-                } else if (sortValue === 'cost_desc') {
-                    return getTripCost(b) - getTripCost(a);
-                } else if (sortValue === 'cost_asc') {
-                    return getTripCost(a) - getTripCost(b);
-                }
-                return 0;
-            });
+            // 2. Map and Group if in Group View
+            let dataToRender = [];
+            if (viewMode === 'group') {
+                const groups = {};
+                filtered.forEach(r => {
+                    const key = `${r.driver_id}_${r.shift_date}`;
+                    if (!groups[key]) {
+                        groups[key] = {
+                            driver_id: r.driver_id,
+                            driver_name: r.driver_name,
+                            shift_date: r.shift_date,
+                            trip_count: 0,
+                            gas_amt: 0,
+                            toll_amt: 0,
+                            others_amt: 0,
+                            parking_amt: 0,
+                            lunch_amt: 0,
+                            trips: [],
+                            all_approved: true
+                        };
+                    }
+                    groups[key].trip_count++;
+                    groups[key].gas_amt += parseFloat(r.gas_amt) || 0;
+                    groups[key].toll_amt += parseFloat(r.toll_amt) || 0;
+                    groups[key].others_amt += parseFloat(r.others_amt) || 0;
+                    groups[key].parking_amt += parseFloat(r.parking_amt) || 0;
+                    groups[key].lunch_amt += parseFloat(r.lunch_amt) || 0;
+                    groups[key].trips.push(r);
+                    
+                    const tripApproved = (r.expense_details || []).every(e => e.approval_status === 'approved');
+                    if (!tripApproved) {
+                        groups[key].all_approved = false;
+                    }
+                });
+                dataToRender = Object.values(groups);
+
+                // Sort grouped data
+                dataToRender.sort((a, b) => {
+                    if (sortValue === 'date_desc') {
+                        return new Date(b.shift_date) - new Date(a.shift_date);
+                    } else if (sortValue === 'date_asc') {
+                        return new Date(a.shift_date) - new Date(b.shift_date);
+                    } else if (sortValue === 'cost_desc') {
+                        const costA = a.gas_amt + a.toll_amt + a.others_amt + a.parking_amt + a.lunch_amt;
+                        const costB = b.gas_amt + b.toll_amt + b.others_amt + b.parking_amt + b.lunch_amt;
+                        return costB - costA;
+                    } else if (sortValue === 'cost_asc') {
+                        const costA = a.gas_amt + a.toll_amt + a.others_amt + a.parking_amt + a.lunch_amt;
+                        const costB = b.gas_amt + b.toll_amt + b.others_amt + b.parking_amt + b.lunch_amt;
+                        return costA - costB;
+                    }
+                    return new Date(b.shift_date) - new Date(a.shift_date);
+                });
+            } else {
+                dataToRender = filtered;
+
+                // Sort detail data
+                dataToRender.sort((a, b) => {
+                    const getTripCost = (t) => {
+                        return (parseFloat(t.gas_amt) || 0) + (parseFloat(t.toll_amt) || 0) + (parseFloat(t.others_amt) || 0) + (parseFloat(t.parking_amt) || 0) + (parseFloat(t.lunch_amt) || 0);
+                    };
+                    
+                    if (sortValue === 'date_desc') {
+                        return new Date(b.start_time) - new Date(a.start_time);
+                    } else if (sortValue === 'date_asc') {
+                        return new Date(a.start_time) - new Date(b.start_time);
+                    } else if (sortValue === 'dist_desc') {
+                        const distA = a.km_end ? (a.km_end - a.km_start) : 0;
+                        const distB = b.km_end ? (b.km_end - b.km_start) : 0;
+                        return distB - distA;
+                    } else if (sortValue === 'dist_asc') {
+                        const distA = a.km_end ? (a.km_end - a.km_start) : 0;
+                        const distB = b.km_end ? (b.km_end - b.km_start) : 0;
+                        return distA - distB;
+                    } else if (sortValue === 'cost_desc') {
+                        return getTripCost(b) - getTripCost(a);
+                    } else if (sortValue === 'cost_asc') {
+                        return getTripCost(a) - getTripCost(b);
+                    }
+                    return 0;
+                });
+            }
 
             // 3. Paginate
-            const totalEntries = filtered.length;
+            const totalEntries = dataToRender.length;
             const totalPages = Math.ceil(totalEntries / pageSize) || 1;
             if (currentPage > totalPages) {
                 currentPage = totalPages;
             }
             const startIndex = (currentPage - 1) * pageSize;
             const endIndex = Math.min(startIndex + pageSize, totalEntries);
-            const pageData = filtered.slice(startIndex, endIndex);
+            const pageData = dataToRender.slice(startIndex, endIndex);
 
-            // 4. Render Table
+            // 4. Render Table Body
             const tbody = document.getElementById('reportContent');
             if (pageData.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="15" align="center" style="padding:20px; color:var(--text-secondary);">No matching records found.</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="${viewMode==='group'?10:15}" align="center" style="padding:20px; color:var(--text-secondary);">No matching records found.</td></tr>`;
                 document.getElementById('report-pagination').innerHTML = '';
                 return;
             }
 
-            tbody.innerHTML = pageData.map((r) => {
-                const appvStatus = r.passenger_approval === 'approved' ? (r.passenger_feedback === 'Approved by Admin' ? 'Approved by Admin' : r.pass_name) : `Belum Appv oleh ${r.pass_name}`;
-                return `
-                <tr>
-                    <td align="center" class="clickable-data" onclick="openEditTripModal(${r.id})"><strong>TX-${r.id}</strong></td>
-                    <td>${r.driver_name}</td>
-                    <td>${r.shift_date}</td>
-                    <td align="center">${r.start_time.substring(11,16)}</td>
-                    <td align="center">${r.end_time ? r.end_time.substring(11,16) : '-'}</td>
-                    <td align="right" class="clickable-data" onclick="showMedia(${r.id}, 'km_start')">${r.km_start}</td>
-                    <td align="right" class="clickable-data" onclick="showMedia(${r.id}, 'km_end')">${r.km_end || '-'}</td>
-                    <td align="right"><strong>${r.km_end ? (r.km_end - r.km_start) : 0}</strong></td>
-                    <td align="right">${r.gas_litre || '-'}</td>
-                    <td align="right" class="${r.gas_amt?'clickable-data':''}" onclick="showMedia(${r.id}, 'gasoline')">${r.gas_amt ? 'Rp '+parseInt(r.gas_amt).toLocaleString() : '-'}</td>
-                    <td align="right" class="${r.toll_amt?'clickable-data':''}" onclick="showMedia(${r.id}, 'toll')">${r.toll_amt ? 'Rp '+parseInt(r.toll_amt).toLocaleString() : '-'}</td>
-                    <td align="right" class="${(parseInt(r.others_amt)||0)+(parseInt(r.parking_amt)||0)?'clickable-data':''}" onclick="showMedia(${r.id}, 'others')">${(parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0) ? 'Rp '+((parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0)).toLocaleString() : '-'}</td>
-                    <td align="right" class="${r.lunch_amt?'clickable-data':''}" onclick="showMedia(${r.id}, 'lunch')">${r.lunch_amt ? 'Rp '+parseInt(r.lunch_amt).toLocaleString() : '-'}</td>
-                    <td align="center"><span style="color: ${r.passenger_approval === 'approved' ? 'inherit' : '#e11d48'}; font-weight: ${r.passenger_approval === 'approved' ? 'normal' : '600'};">${appvStatus}</span></td>
-                    <td class="clickable-data" onclick="showTripMap(${r.id})">${r.dest_name}</td>
-                </tr>
-            `;}).join('');
+            if (viewMode === 'group') {
+                tbody.innerHTML = pageData.map((g) => {
+                    const totalCost = g.gas_amt + g.toll_amt + g.others_amt + g.parking_amt + g.lunch_amt;
+                    const checkedHtml = g.all_approved 
+                        ? `<span style="color: #166534; font-weight: 700; font-size: 1.1rem;">✔</span>` 
+                        : `<span style="color: #94a3b8; font-weight: 500;">-</span>`;
+                    
+                    let actionButtons = '';
+                    if (!g.all_approved) {
+                        actionButtons += `<button onclick="approveGroupAdmin(${g.driver_id}, '${g.shift_date}')" class="btn-action" style="background: #10b981; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold; margin-right: 6px;">Approve All</button>`;
+                    }
+                    actionButtons += `<button onclick="viewGroupDetails(${g.driver_id}, '${g.shift_date}')" class="btn-action" style="background: #3b82f6; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;">Detail</button>`;
+
+                    return `
+                    <tr>
+                        <td><strong>${g.driver_name}</strong></td>
+                        <td align="center">${g.shift_date}</td>
+                        <td align="center"><strong>${g.trip_count}</strong></td>
+                        <td align="right">${g.gas_amt ? 'Rp '+parseInt(g.gas_amt).toLocaleString() : '-'}</td>
+                        <td align="right">${g.toll_amt ? 'Rp '+parseInt(g.toll_amt).toLocaleString() : '-'}</td>
+                        <td align="right">${(g.others_amt + g.parking_amt) ? 'Rp '+parseInt(g.others_amt + g.parking_amt).toLocaleString() : '-'}</td>
+                        <td align="right">${g.lunch_amt ? 'Rp '+parseInt(g.lunch_amt).toLocaleString() : '-'}</td>
+                        <td align="right" style="color: var(--pbi-blue); font-weight: bold;">Rp ${parseInt(totalCost).toLocaleString()}</td>
+                        <td align="center">${checkedHtml}</td>
+                        <td align="center">${actionButtons}</td>
+                    </tr>
+                    `;
+                }).join('');
+            } else {
+                tbody.innerHTML = pageData.map((r) => {
+                    const allApproved = (r.expense_details || []).every(e => e.approval_status === 'approved');
+                    const checkedHtml = allApproved 
+                        ? `<span style="color: #166534; font-weight: 700; font-size: 1.1rem;">✔</span>` 
+                        : `<span style="color: #94a3b8; font-weight: 500;">-</span>`;
+                    return `
+                    <tr>
+                        <td align="center" class="clickable-data" onclick="openEditTripModal(${r.id})"><strong>TX-${r.id}</strong></td>
+                        <td>${r.driver_name}</td>
+                        <td>${r.shift_date}</td>
+                        <td align="center">${r.start_time.substring(11,16)}</td>
+                        <td align="center">${r.end_time ? r.end_time.substring(11,16) : '-'}</td>
+                        <td align="right" class="clickable-data" onclick="showMedia(${r.id}, 'km_start')">${r.km_start}</td>
+                        <td align="right" class="clickable-data" onclick="showMedia(${r.id}, 'km_end')">${r.km_end || '-'}</td>
+                        <td align="right"><strong>${r.km_end ? (r.km_end - r.km_start) : 0}</strong></td>
+                        <td align="right">${r.gas_litre || '-'}</td>
+                        <td align="right" class="${r.gas_amt?'clickable-data':''}" onclick="showMedia(${r.id}, 'gasoline')">${r.gas_amt ? 'Rp '+parseInt(r.gas_amt).toLocaleString() : '-'}</td>
+                        <td align="right" class="${r.toll_amt?'clickable-data':''}" onclick="showMedia(${r.id}, 'toll')">${r.toll_amt ? 'Rp '+parseInt(r.toll_amt).toLocaleString() : '-'}</td>
+                        <td align="right" class="${(parseInt(r.others_amt)||0)+(parseInt(r.parking_amt)||0)?'clickable-data':''}" onclick="showMedia(${r.id}, 'others')">${(parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0) ? 'Rp '+((parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0)).toLocaleString() : '-'}</td>
+                        <td align="right" class="${r.lunch_amt?'clickable-data':''}" onclick="showMedia(${r.id}, 'lunch')">${r.lunch_amt ? 'Rp '+parseInt(r.lunch_amt).toLocaleString() : '-'}</td>
+                        <td>${r.pass_name || '-'}</td>
+                        <td align="center">${checkedHtml}</td>
+                        <td class="clickable-data" onclick="showTripMap(${r.id})">${r.dest_name}</td>
+                    </tr>
+                    `;
+                }).join('');
+            }
 
             // 5. Render Pagination Controls
             const infoText = totalEntries > 0 ? `Showing ${startIndex + 1} to ${endIndex} of ${totalEntries} entries` : 'Showing 0 to 0 of 0 entries';
@@ -932,30 +1168,28 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             container.innerHTML = '';
             
             if (type === 'km_start' || type === 'km_end') {
-                title.innerText = `Odometer Photo (${type === 'km_start' ? 'Start' : 'End'})`;
+                title.innerText = `Odometer (${type === 'km_start' ? 'Start' : 'End'})`;
                 const photo = type === 'km_start' ? r.km_start_photo : r.km_end_photo;
                 const time = type === 'km_start' ? r.start_time : r.end_time;
-                if (photo) {
-                    container.innerHTML = `
-                        <div style="background: var(--bg-color); border: 1px solid var(--glass-border); border-radius: 12px; padding: 16px; margin-bottom: 12px; font-family: inherit;">
-                            <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 0.8rem; border-bottom: 1px dashed var(--glass-border); padding-bottom: 8px; color: var(--text-secondary);">
-                                <span>Total Files: <strong>1</strong></span>
-                                <span>Uploaded At: <strong>${time}</strong></span>
+                const photoHtml = (mandatoryPhoto === '1' && photo) ? `
+                    <div style="position: relative; cursor: pointer; min-width: 100px;" onclick="openImageViewer('uploads/${photo}')" title="Click to view full size">
+                        <img src="uploads/thumb_${photo}" onerror="this.src='uploads/${photo}'" class="evidence-img" style="width: 100px; height: 100px; object-fit: cover; border-radius: 8px; border: 1px solid var(--glass-border); display: block;">
+                        <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6); color: white; border-radius: 4px; padding: 2px 4px; font-size: 0.65rem;">🔍</div>
+                    </div>
+                ` : '';
+                container.innerHTML = `
+                    <div style="background: var(--bg-color); border: 1px solid var(--glass-border); border-radius: 12px; padding: 16px; margin-bottom: 12px; font-family: inherit;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 0.8rem; border-bottom: 1px dashed var(--glass-border); padding-bottom: 8px; color: var(--text-secondary);">
+                            <span>Uploaded At: <strong>${time}</strong></span>
+                        </div>
+                        <div style="display: flex; gap: 16px; align-items: center;">
+                            ${photoHtml}
+                            <div style="font-size: 0.85rem; color: var(--text-primary);">
+                                <div style="margin-bottom: 4px;"><strong>Odometer (${type === 'km_start' ? 'Start' : 'End'})</strong></div>
+                                <div style="color: var(--text-secondary);">Value: <strong>${type === 'km_start' ? r.km_start : (r.km_end || '-')} KM</strong></div>
                             </div>
-                            <div style="display: flex; gap: 16px; align-items: center;">
-                                <div style="position: relative; cursor: pointer; min-width: 100px;" onclick="openImageViewer('uploads/${photo}')" title="Click to view full size">
-                                    <img src="uploads/thumb_${photo}" onerror="this.src='uploads/${photo}'" class="evidence-img" style="width: 100px; height: 100px; object-fit: cover; border-radius: 8px; border: 1px solid var(--glass-border); display: block;">
-                                    <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6); color: white; border-radius: 4px; padding: 2px 4px; font-size: 0.65rem;">🔍</div>
-                                </div>
-                                <div style="font-size: 0.85rem; color: var(--text-primary);">
-                                    <div style="margin-bottom: 4px;"><strong>Odometer (${type === 'km_start' ? 'Start' : 'End'})</strong></div>
-                                    <div style="color: var(--text-secondary);">Value: <strong>${type === 'km_start' ? r.km_start : (r.km_end || '-')} KM</strong></div>
-                                </div>
-                            </div>
-                        </div>`;
-                } else {
-                    container.innerHTML = '<p style="text-align:center; padding:20px; color: var(--text-secondary);">No photo available.</p>';
-                }
+                        </div>
+                    </div>`;
             } else {
                 title.innerText = `Expense Receipt: ${type.toUpperCase()}`;
                 const expenses = r.expense_details.filter(e => {
@@ -974,13 +1208,16 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                         <div style="display: flex; flex-direction: column; gap: 12px;">`;
                     
                     expenses.forEach(e => {
+                        const photoHtml = (mandatoryPhoto === '1' && e.photo) ? `
+                            <div style="position: relative; cursor: pointer; min-width: 80px;" onclick="openImageViewer('uploads/${e.photo}')" title="Click to view full size">
+                                <img src="uploads/thumb_${e.photo}" onerror="this.src='uploads/${e.photo}'" class="evidence-img" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px; border: 1px solid var(--glass-border); display: block;">
+                                <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6); color: white; border-radius: 4px; padding: 2px 4px; font-size: 0.65rem;">🔍</div>
+                            </div>
+                        ` : '';
                         html += `
                             <div style="background: var(--bg-color); border: 1px solid var(--glass-border); border-radius: 12px; padding: 12px; display: flex; gap: 16px; align-items: center; justify-content: space-between;">
                                 <div style="display: flex; gap: 16px; align-items: center;">
-                                    <div style="position: relative; cursor: pointer; min-width: 80px;" onclick="openImageViewer('uploads/${e.photo}')" title="Click to view full size">
-                                        <img src="uploads/thumb_${e.photo}" onerror="this.src='uploads/${e.photo}'" class="evidence-img" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px; border: 1px solid var(--glass-border); display: block;">
-                                        <div style="position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6); color: white; border-radius: 4px; padding: 2px 4px; font-size: 0.65rem;">🔍</div>
-                                    </div>
+                                    ${photoHtml}
                                     <div style="font-size: 0.85rem;">
                                         <div style="font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">Rp ${parseInt(e.amount).toLocaleString()}</div>
                                         <div style="font-size: 0.75rem; color: var(--text-secondary);">${e.expense_type.toUpperCase()}</div>
@@ -1140,12 +1377,12 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                     ["Month :", monthName, "", "", "", "", "", "", "", "Driver :", name],
                     ["Year :", year, "", "", "", "", "", "", "", "Car No :", firstRow.car_no],
                     [],
-                    ["Date", "Time", "", "Km", "", "", "Litre", "Amount", "", "", "", "Approved by", "", "Place"],
-                    ["", "In", "Out", "In", "Out", "Total", "", "Gasoline", "Toll", "Others", "Lunch Outside", "User", "Signature", ""]
+                    ["Date", "Time", "", "Km", "", "", "Litre", "Amount", "", "", "", "Passenger", "Checked", "Place"],
+                    ["", "In", "Out", "In", "Out", "Total", "", "Gasoline", "Toll", "Others", "Lunch Outside", "", "", ""]
                 ];
 
                 driverData.forEach(r => {
-                    const appvStatus = r.passenger_approval === 'approved' ? (r.passenger_feedback === 'Approved by Admin' ? 'Approved by Admin' : r.pass_name) : `Belum Appv oleh ${r.pass_name}`;
+                    const allApproved = (r.expense_details || []).every(e => e.approval_status === 'approved');
                     rows.push([
                         r.shift_date,
                         r.start_time.substring(11,16),
@@ -1158,8 +1395,8 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                         r.toll_amt || 0,
                         (parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0),
                         r.lunch_amt || 0,
-                        appvStatus,
-                        "",
+                        r.pass_name || '-',
+                        allApproved ? "✔" : "-",
                         r.dest_name
                     ]);
                 });
@@ -1197,16 +1434,19 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                 doc.text(`Year  : ${dateObj.getFullYear()}`, 40, 80);
                 doc.text(`Driver : ${name}`, 550, 65);
                 doc.text(`Car No : ${firstRow.car_no}`, 550, 80);
-                const tableBody = driverData.map(r => [
-                    r.shift_date, r.start_time.substring(11,16), r.end_time ? r.end_time.substring(11,16) : '-',
-                    r.km_start, r.km_end || '-', r.km_end ? (r.km_end - r.km_start) : 0, r.gas_litre || '-',
-                    r.gas_amt || 0, r.toll_amt || 0, (parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0),
-                    r.lunch_amt || 0, r.passenger_approval === 'approved' ? (r.passenger_feedback === 'Approved by Admin' ? 'Approved by Admin' : r.pass_name) : `Belum Appv oleh ${r.pass_name}`, r.dest_name
-                ]);
-                doc.autoTable({
-                    head: [[{content:'Date',rowSpan:2},{content:'Time',colSpan:2},{content:'Km',colSpan:3},{content:'Litre',rowSpan:2},{content:'Amount',colSpan:4},{content:'Approved',rowSpan:2},{content:'Place',rowSpan:2}],['In','Out','In','Out','Total','Gasoline','Toll','Others','Lunch']],
-                    body: tableBody, startY: 100, theme: 'grid', styles: {fontSize:7, cellPadding:3}, headStyles: {fillColor:[51,51,51], halign:'center'}
-                });
+                 const tableBody = driverData.map(r => {
+                     const allApproved = (r.expense_details || []).every(e => e.approval_status === 'approved');
+                     return [
+                         r.shift_date, r.start_time.substring(11,16), r.end_time ? r.end_time.substring(11,16) : '-',
+                         r.km_start, r.km_end || '-', r.km_end ? (r.km_end - r.km_start) : 0, r.gas_litre || '-',
+                         r.gas_amt || 0, r.toll_amt || 0, (parseInt(r.others_amt)||0) + (parseInt(r.parking_amt)||0),
+                         r.lunch_amt || 0, r.pass_name || '-', allApproved ? '✔' : '-', r.dest_name
+                     ];
+                 });
+                 doc.autoTable({
+                     head: [[{content:'Date',rowSpan:2},{content:'Time',colSpan:2},{content:'Km',colSpan:3},{content:'Litre',rowSpan:2},{content:'Amount',colSpan:4},{content:'Passenger',rowSpan:2},{content:'Checked',rowSpan:2},{content:'Place',rowSpan:2}],['In','Out','In','Out','Total','Gasoline','Toll','Others','Lunch']],
+                     body: tableBody, startY: 100, theme: 'grid', styles: {fontSize:7, cellPadding:3}, headStyles: {fillColor:[51,51,51], halign:'center'}
+                 });
             });
             doc.save(`Transport_Report_${new Date().getTime()}.pdf`);
         }
@@ -1368,84 +1608,113 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             doc.save(`Annual_Cost_Summary_${year}_${new Date().getTime()}.pdf`);
         }
 
-        function openEditTripModal(tripId) {
-            try {
-                console.log("openEditTripModal called for TX-" + tripId);
-                const trip = currentData.find(t => t.id == tripId);
-                if (!trip) {
-                    alert("Trip data not found in current dataset!");
-                    return;
-                }
-                
-                const editTripIdEl = document.getElementById('edit_trip_id');
-                const deleteTripIdEl = document.getElementById('delete_trip_id');
-                const editStartTimeEl = document.getElementById('edit_start_time');
-                const editEndTimeEl = document.getElementById('edit_end_time');
-                const editPassengerApprovalEl = document.getElementById('edit_passenger_approval');
-                const editPassengerFeedbackEl = document.getElementById('edit_passenger_feedback');
-                
-                if (!editTripIdEl || !deleteTripIdEl || !editStartTimeEl || !editEndTimeEl || !editPassengerApprovalEl || !editPassengerFeedbackEl) {
-                    alert("Error: One or more modal elements were not found in the DOM.");
-                    return;
-                }
-                
-                editTripIdEl.value = tripId;
-                deleteTripIdEl.value = tripId;
-                
-                const formatForDatetimeLocal = (ts) => {
-                    if (!ts) return '';
-                    return ts.replace(' ', 'T').substring(0, 16);
-                };
-                
-                editStartTimeEl.value = formatForDatetimeLocal(trip.start_time);
-                editEndTimeEl.value = formatForDatetimeLocal(trip.end_time);
-                editPassengerApprovalEl.value = trip.passenger_approval || 'pending';
-                editPassengerFeedbackEl.value = trip.passenger_feedback || '';
-                
-                const isApproved = trip.passenger_approval === 'approved';
-                const isRejected = trip.passenger_approval === 'rejected';
-                const approvalTextEl = document.getElementById('edit_passenger_approval_text');
-                const adminApproveBtn = document.getElementById('adminApproveBtn');
-                
-                if (isApproved) {
-                    const approver = trip.passenger_feedback === 'Approved by Admin' ? 'Admin' : 'Passenger';
-                    approvalTextEl.innerText = `Approved (by ${approver})`;
-                    approvalTextEl.style.color = '#15803d';
-                    adminApproveBtn.style.display = 'none';
-                } else if (isRejected) {
-                    approvalTextEl.innerText = 'Rejected';
-                    approvalTextEl.style.color = '#b91c1c';
-                    adminApproveBtn.style.display = 'inline-block';
-                } else {
-                    approvalTextEl.innerText = 'Pending';
-                    approvalTextEl.style.color = '#92400e';
-                    adminApproveBtn.style.display = 'inline-block';
-                }
-                
-                const adminDeleteTripBtn = document.getElementById('adminDeleteTripBtn');
-                const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
-                if (adminDeleteTripBtn) {
-                    adminDeleteTripBtn.innerText = lang === 'id' ? `Hapus TX-${tripId}` : `Delete TX-${tripId}`;
-                }
-                
-                document.getElementById('editTripModalTitle').innerText = `Edit Trip TX-${tripId} (${trip.driver_name})`;
-                document.getElementById('editTripModal').style.display = 'block';
-            } catch (err) {
-                console.error("Error in openEditTripModal:", err);
-                alert("JS Error: " + err.message);
-            }
-        }
-
-        function setAdminApproved() {
-            document.getElementById('edit_passenger_approval').value = 'approved';
-            document.getElementById('edit_passenger_feedback').value = 'Approved by Admin';
-            
-            const textEl = document.getElementById('edit_passenger_approval_text');
-            textEl.innerText = 'Approved (by Admin)';
-            textEl.style.color = '#15803d';
-            
-            document.getElementById('adminApproveBtn').style.display = 'none';
-        }
+         function openEditTripModal(tripId) {
+             try {
+                 console.log("openEditTripModal called for TX-" + tripId);
+                 const trip = currentData.find(t => t.id == tripId);
+                 if (!trip) {
+                     alert("Trip data not found in current dataset!");
+                     return;
+                 }
+                 
+                 const editTripIdEl = document.getElementById('edit_trip_id');
+                 const deleteTripIdEl = document.getElementById('delete_trip_id');
+                 const editStartTimeEl = document.getElementById('edit_start_time');
+                 const editEndTimeEl = document.getElementById('edit_end_time');
+                 
+                 if (!editTripIdEl || !deleteTripIdEl || !editStartTimeEl || !editEndTimeEl) {
+                     alert("Error: One or more modal elements were not found in the DOM.");
+                     return;
+                 }
+                 
+                 editTripIdEl.value = tripId;
+                 deleteTripIdEl.value = tripId;
+                 
+                 const formatForDatetimeLocal = (ts) => {
+                     if (!ts) return '';
+                     return ts.replace(' ', 'T').substring(0, 16);
+                 };
+                 
+                 editStartTimeEl.value = formatForDatetimeLocal(trip.start_time);
+                 editEndTimeEl.value = formatForDatetimeLocal(trip.end_time);
+                 
+                 // Populate expenses checklist & inputs
+                 const expensesListEl = document.getElementById('modal_expenses_list');
+                 if (expensesListEl) {
+                     expensesListEl.innerHTML = '';
+                     const expenses = trip.expense_details || [];
+                     if (expenses.length === 0) {
+                         expensesListEl.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.8rem; font-style: italic; margin: 0;">Tidak ada pengajuan biaya untuk transaksi ini.</p>';
+                     } else {
+                         expenses.forEach(e => {
+                             const isGas = e.expense_type === 'gasoline';
+                             const checked = e.approval_status === 'approved' ? 'checked' : '';
+                             
+                             const expCard = document.createElement('div');
+                             expCard.style.cssText = 'background: var(--bg-color); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px;';
+                             expCard.innerHTML = `
+                                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed var(--glass-border); padding-bottom: 6px;">
+                                     <span style="font-weight: bold; color: var(--text-primary);">Expense ID: ${e.id} (${e.expense_type.toUpperCase()})</span>
+                                     <label style="display: flex; align-items: center; gap: 6px; font-weight: 700; cursor: pointer; color: #166534; user-select: none;">
+                                         <input type="checkbox" name="expense_approved[${e.id}]" value="approved" ${checked} style="width:16px; height:16px; cursor:pointer; margin: 0 4px 0 0;">
+                                         Approve
+                                     </label>
+                                 </div>
+                                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                     <div style="flex: 1; min-width: 100px;">
+                                         <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Type</label>
+                                         <select name="expense_type[${e.id}]" onchange="toggleLitreInput(${e.id}, this.value)" style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                                             <option value="gasoline" ${e.expense_type==='gasoline'?'selected':''}>Gasoline</option>
+                                             <option value="toll" ${e.expense_type==='toll'?'selected':''}>Toll</option>
+                                             <option value="parking" ${e.expense_type==='parking'?'selected':''}>Parking</option>
+                                             <option value="lunch" ${e.expense_type==='lunch'?'selected':''}>Lunch</option>
+                                             <option value="others" ${e.expense_type==='others'?'selected':''}>Others</option>
+                                         </select>
+                                     </div>
+                                     <div style="flex: 1; min-width: 100px;">
+                                         <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Amount (Rp)</label>
+                                         <input type="number" name="expense_amount[${e.id}]" value="${parseInt(e.amount)}" style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                                     </div>
+                                     <div id="litre_div_${e.id}" style="flex: 1; min-width: 80px; display: ${isGas?'block':'none'};">
+                                         <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Litre</label>
+                                         <input type="number" step="any" name="expense_litre[${e.id}]" value="${e.litre || ''}" style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                                     </div>
+                                 </div>
+                                 <div>
+                                     <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Note / Catatan Admin</label>
+                                     <input type="text" name="expense_note[${e.id}]" value="${e.supervisor_note || ''}" placeholder="Tambahkan catatan..." style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                                 </div>
+                             `;
+                             expensesListEl.appendChild(expCard);
+                         });
+                     }
+                 }
+                 
+                 const adminDeleteTripBtn = document.getElementById('adminDeleteTripBtn');
+                 const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
+                 if (adminDeleteTripBtn) {
+                     adminDeleteTripBtn.innerText = lang === 'id' ? `Hapus TX-${tripId}` : `Delete TX-${tripId}`;
+                 }
+                 
+                 document.getElementById('editTripModalTitle').innerText = `Edit Trip TX-${tripId} (${trip.driver_name})`;
+                 document.getElementById('editTripModal').style.display = 'block';
+             } catch (err) {
+                 console.error("Error in openEditTripModal:", err);
+                 alert("JS Error: " + err.message);
+             }
+         }
+ 
+         function toggleLitreInput(id, val) {
+             const div = document.getElementById('litre_div_' + id);
+             if (div) {
+                 div.style.display = val === 'gasoline' ? 'block' : 'none';
+             }
+         }
+         
+         function filterUncheckedOnly() {
+             document.getElementById('report-filter-status').value = 'pending';
+             renderReportTable();
+         }
         
         function closeEditTripModal() {
             document.getElementById('editTripModal').style.display = 'none';
@@ -1453,12 +1722,20 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
         
         function confirmDeleteTripAdmin() {
             const tripId = document.getElementById('delete_trip_id').value;
+            const targetCode = `TX-${tripId}`;
             const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
-            const confirmMsg = lang === 'id' 
-                ? `Yakin akan hapus TX-${tripId} secara permanen?\nSemua data biaya dan foto bukti akan dihapus.` 
-                : `Are you sure you want to delete TX-${tripId} permanently?\nAll recorded expenses and photos will be deleted.`;
-            if (confirm(confirmMsg)) {
+            
+            const promptMsg = lang === 'id'
+                ? `Peringatan: Menghapus ${targetCode} akan menghapus seluruh rincian biaya dan foto struk secara permanen.\n\nUntuk melanjutkan, silakan ketik ulang "${targetCode}" di bawah ini:`
+                : `Warning: Deleting ${targetCode} will permanently remove all associated expenses and receipts.\n\nTo proceed, please re-type "${targetCode}" below:`;
+            
+            const userInput = prompt(promptMsg);
+            if (userInput === targetCode) {
                 document.getElementById('deleteTripForm').submit();
+            } else if (userInput !== null) {
+                alert(lang === 'id' 
+                    ? `Konfirmasi gagal. Kode yang Anda masukkan salah.` 
+                    : `Confirmation failed. The code you entered did not match.`);
             }
         }
 
@@ -1574,6 +1851,38 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             // Close media container first
             document.getElementById('mediaModal').style.display = 'none';
             document.getElementById('editExpenseModal').style.display = 'flex';
+        }
+
+        function approveGroupAdmin(driverId, shiftDate) {
+            if (confirm(`Approve all expenses for this driver on ${shiftDate}?`)) {
+                const formData = new FormData();
+                formData.append('action', 'approve_group_admin');
+                formData.append('driver_id', driverId);
+                formData.append('shift_date', shiftDate);
+                fetch('report.php', { method: 'POST', body: formData })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert("Group Expenses Approved!");
+                            generateReport(); // Refresh data preview
+                        } else {
+                            alert("Error: " + data.error);
+                        }
+                    });
+            }
+        }
+
+        function viewGroupDetails(driverId, shiftDate) {
+            // Set view mode to detail to show individual items
+            document.getElementById('report-view-mode').value = 'detail';
+            
+            // Filter by driver and exact shift date to inspect them
+            document.getElementById('start_date').value = shiftDate;
+            document.getElementById('end_date').value = shiftDate;
+            document.getElementById('driver_id').value = driverId;
+            
+            // Trigger load & render
+            generateReport();
         }
     </script>
 </body>
