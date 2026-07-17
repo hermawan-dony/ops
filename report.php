@@ -64,6 +64,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         
         header("Location: report.php?msg=" . urlencode("Trip TX-{$trip_id} and expenses updated successfully"));
         exit;
+    } elseif ($_POST['action'] === 'edit_expense_ajax') {
+        header('Content-Type: application/json');
+        try {
+            $expense_id   = intval($_POST['expense_id']);
+            $expense_type = $_POST['expense_type'];
+            $amount       = floatval($_POST['amount']);
+            $litre        = isset($_POST['litre']) && $_POST['litre'] !== '' ? floatval($_POST['litre']) : null;
+            $note         = $_POST['note'] ?? '';
+            $approved     = isset($_POST['approved']) && $_POST['approved'] === '1';
+            $status       = $approved ? 'approved' : 'pending';
+            $approved_by  = $approved ? 'Admin' : null;
+            $approved_at  = $approved ? date('Y-m-d H:i:s') : null;
+
+            $stmt = $pdo->prepare("UPDATE trip_expenses
+                SET expense_type=?, amount=?, litre=?, supervisor_note=?,
+                    approval_status=?, approved_by_name=?, approved_at=?
+                WHERE id=?");
+            $stmt->execute([$expense_type, $amount, $litre, $note,
+                            $status, $approved_by, $approved_at, $expense_id]);
+
+            // Recalculate trip approval
+            $trip_row = $pdo->prepare("SELECT trip_id FROM trip_expenses WHERE id=?");
+            $trip_row->execute([$expense_id]);
+            $trip_id = $trip_row->fetchColumn();
+
+            $counts = $pdo->prepare("SELECT COUNT(*) as total,
+                SUM(CASE WHEN approval_status='approved' THEN 1 ELSE 0 END) as approved_cnt
+                FROM trip_expenses WHERE trip_id=?");
+            $counts->execute([$trip_id]);
+            $c = $counts->fetch();
+            $trip_status = ($c['approved_cnt'] >= $c['total']) ? 'approved' : 'pending';
+            $pdo->prepare("UPDATE trips SET passenger_approval=? WHERE id=?")->execute([$trip_status, $trip_id]);
+
+            // Return updated expense row totals for the group
+            echo json_encode(['success' => true, 'expense_id' => $expense_id,
+                              'trip_id' => $trip_id, 'amount' => $amount,
+                              'expense_type' => $expense_type, 'litre' => $litre,
+                              'approval_status' => $status]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    } elseif ($_POST['action'] === 'get_group_trips') {
+        header('Content-Type: application/json');
+        try {
+            $driver_id  = intval($_POST['driver_id']);
+            $shift_date = $_POST['shift_date'];
+
+            $stmt = $pdo->prepare("
+                SELECT t.id, t.start_time, t.end_time, t.km_start, t.km_end,
+                       t.passenger_approval, d.name as dest_name, p.name as pass_name
+                FROM trips t
+                JOIN shifts s ON t.shift_id = s.id
+                LEFT JOIN destinations d ON t.destination_id = d.id
+                LEFT JOIN passengers p ON t.passenger_id = p.id
+                WHERE s.driver_id = ? AND s.shift_date = ? AND t.status = 'completed'
+                ORDER BY t.start_time ASC
+            ");
+            $stmt->execute([$driver_id, $shift_date]);
+            $trips = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($trips as &$trip) {
+                $exp_stmt = $pdo->prepare("SELECT * FROM trip_expenses WHERE trip_id = ? ORDER BY expense_type ASC");
+                $exp_stmt->execute([$trip['id']]);
+                $trip['expenses'] = $exp_stmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+            echo json_encode(['success' => true, 'trips' => $trips]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
     } elseif ($_POST['action'] === 'edit_expense_admin') {
         $expense_id = intval($_POST['expense_id']);
         $expense_type = $_POST['expense_type'];
@@ -851,8 +922,9 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                     
                     let actionButtons = '';
                     if (!g.all_approved) {
-                        actionButtons += `<button onclick="approveGroupAdmin(${g.driver_id}, '${g.shift_date}')" class="btn-action" style="background: #10b981; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold; margin-right: 6px;">Approve All</button>`;
+                        actionButtons += `<button onclick="approveGroupAdmin(${g.driver_id}, '${g.shift_date}')" class="btn-action" style="background: #10b981; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold; margin-right: 4px;">Approve All</button>`;
                     }
+                    actionButtons += `<button onclick="openGroupEditModal(${g.driver_id}, '${g.shift_date}')" class="btn-action" style="background: #f59e0b; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold; margin-right: 4px;">✏️ Edit</button>`;
                     actionButtons += `<button onclick="viewGroupDetails(${g.driver_id}, '${g.shift_date}')" class="btn-action" style="background: #3b82f6; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: bold;">Detail</button>`;
 
                     return `
@@ -1961,6 +2033,239 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
             // Trigger load & render
             generateReport();
         }
+
+        // -------------------------------------------------------
+        // GROUP EDIT MODAL — inline expense editing from Group view
+        // -------------------------------------------------------
+        let _groupEditCtx = { driverId: null, shiftDate: null, rowKey: null };
+
+        async function openGroupEditModal(driverId, shiftDate) {
+            _groupEditCtx = { driverId, shiftDate, rowKey: `${driverId}_${shiftDate}` };
+
+            const modal = document.getElementById('groupEditModal');
+            const body  = document.getElementById('groupEditBody');
+            document.getElementById('groupEditTitle').textContent =
+                `Edit Expenses — ${shiftDate}`;
+            body.innerHTML = `<div style="text-align:center;padding:24px;color:var(--text-secondary);">Loading trips...</div>`;
+            modal.style.display = 'flex';
+
+            const fd = new FormData();
+            fd.append('action', 'get_group_trips');
+            fd.append('driver_id', driverId);
+            fd.append('shift_date', shiftDate);
+            const res  = await fetch('report.php', { method: 'POST', body: fd });
+            const data = await res.json();
+
+            if (!data.success) {
+                body.innerHTML = `<p style="color:red">Error: ${data.error}</p>`;
+                return;
+            }
+
+            if (!data.trips.length) {
+                body.innerHTML = `<p style="color:var(--text-secondary)">No completed trips found for this group.</p>`;
+                return;
+            }
+
+            body.innerHTML = data.trips.map(trip => {
+                const dest     = trip.dest_name || '-';
+                const pass     = trip.pass_name || '-';
+                const timeIn   = trip.start_time ? trip.start_time.substring(11,16) : '-';
+                const timeOut  = trip.end_time   ? trip.end_time.substring(11,16)   : '-';
+                const km       = (trip.km_start && trip.km_end) ? (trip.km_end - trip.km_start) : '-';
+
+                const expRows = trip.expenses.length ? trip.expenses.map(e => {
+                    const isGas = e.expense_type === 'gasoline';
+                    const approved = e.approval_status === 'approved';
+                    return `
+                    <tr id="exp-row-${e.id}" style="border-bottom:1px solid var(--glass-border);">
+                        <td style="padding:6px 8px;font-size:0.78rem;">
+                            <select id="etype-${e.id}" onchange="document.getElementById('elitre-wrap-${e.id}').style.display=this.value==='gasoline'?'':'none'"
+                                style="padding:3px 6px;font-size:0.75rem;border-radius:4px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text-primary);">
+                                <option value="gasoline" ${e.expense_type==='gasoline'?'selected':''}>Gasoline</option>
+                                <option value="toll"     ${e.expense_type==='toll'?'selected':''}>Toll</option>
+                                <option value="parking"  ${e.expense_type==='parking'?'selected':''}>Parking</option>
+                                <option value="lunch"    ${e.expense_type==='lunch'?'selected':''}>Lunch</option>
+                                <option value="others"   ${e.expense_type==='others'?'selected':''}>Others</option>
+                            </select>
+                        </td>
+                        <td style="padding:6px 8px;">
+                            <input id="eamt-${e.id}" type="number" value="${parseInt(e.amount)}"
+                                style="width:110px;padding:3px 6px;font-size:0.78rem;border-radius:4px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text-primary);">
+                        </td>
+                        <td id="elitre-wrap-${e.id}" style="padding:6px 8px;display:${isGas?'':'none'};">
+                            <input id="elitre-${e.id}" type="number" step="0.01" value="${e.litre||''}"
+                                style="width:70px;padding:3px 6px;font-size:0.78rem;border-radius:4px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text-primary);">
+                        </td>
+                        <td style="padding:6px 8px;">
+                            <input id="enote-${e.id}" type="text" value="${(e.supervisor_note||'').replace(/"/g,'&quot;')}" placeholder="note..."
+                                style="width:120px;padding:3px 6px;font-size:0.75rem;border-radius:4px;border:1px solid var(--glass-border);background:var(--card-bg);color:var(--text-primary);">
+                        </td>
+                        <td style="padding:6px 8px;text-align:center;">
+                            <input id="eapprove-${e.id}" type="checkbox" ${approved?'checked':''} style="width:16px;height:16px;cursor:pointer;">
+                        </td>
+                        <td style="padding:6px 8px;text-align:center;">
+                            <button onclick="saveExpenseAjax(${e.id}, ${trip.id})"
+                                style="background:#3b82f6;color:#fff;border:none;padding:4px 10px;border-radius:4px;font-size:0.72rem;font-weight:700;cursor:pointer;">
+                                💾 Save
+                            </button>
+                            <span id="esave-status-${e.id}" style="font-size:0.7rem;margin-left:4px;"></span>
+                        </td>
+                    </tr>`;
+                }).join('') : `<tr><td colspan="6" style="padding:10px;color:var(--text-secondary);font-style:italic;font-size:0.8rem;">No expenses recorded.</td></tr>`;
+
+                return `
+                <div style="margin-bottom:18px;background:var(--card-bg);border:1px solid var(--glass-border);border-radius:10px;overflow:hidden;">
+                    <div style="background:rgba(17,141,255,0.08);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+                        <strong style="font-size:0.85rem;color:var(--pbi-blue);">TX-${trip.id} &nbsp;·&nbsp; ${timeIn}–${timeOut}</strong>
+                        <span style="font-size:0.78rem;color:var(--text-secondary);">${dest} &nbsp;|&nbsp; ${pass} &nbsp;|&nbsp; Δkm: ${km}</span>
+                    </div>
+                    <table style="width:100%;border-collapse:collapse;">
+                        <thead>
+                            <tr style="background:rgba(0,0,0,0.03);font-size:0.72rem;color:var(--text-secondary);text-transform:uppercase;">
+                                <th style="padding:5px 8px;text-align:left;">Type</th>
+                                <th style="padding:5px 8px;text-align:left;">Amount (Rp)</th>
+                                <th style="padding:5px 8px;text-align:left;">Litre</th>
+                                <th style="padding:5px 8px;text-align:left;">Note</th>
+                                <th style="padding:5px 8px;text-align:center;">Approve</th>
+                                <th style="padding:5px 8px;text-align:center;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trip-exp-${trip.id}">${expRows}</tbody>
+                    </table>
+                </div>`;
+            }).join('');
+        }
+
+        async function saveExpenseAjax(expId, tripId) {
+            const type    = document.getElementById(`etype-${expId}`).value;
+            const amount  = document.getElementById(`eamt-${expId}`).value;
+            const litreEl = document.getElementById(`elitre-${expId}`);
+            const litre   = litreEl ? litreEl.value : '';
+            const note    = document.getElementById(`enote-${expId}`).value;
+            const approved= document.getElementById(`eapprove-${expId}`).checked ? '1' : '0';
+            const statusEl= document.getElementById(`esave-status-${expId}`);
+
+            statusEl.textContent = '⏳';
+            statusEl.style.color = '#f59e0b';
+
+            const fd = new FormData();
+            fd.append('action',   'edit_expense_ajax');
+            fd.append('expense_id', expId);
+            fd.append('expense_type', type);
+            fd.append('amount',   amount);
+            fd.append('litre',    litre);
+            fd.append('note',     note);
+            fd.append('approved', approved);
+
+            const res  = await fetch('report.php', { method: 'POST', body: fd });
+            const data = await res.json();
+
+            if (!data.success) {
+                statusEl.textContent = '❌ ' + (data.error || 'Error');
+                statusEl.style.color = '#e11d48';
+                return;
+            }
+
+            statusEl.textContent = '✔ Saved';
+            statusEl.style.color = '#16a34a';
+            setTimeout(() => statusEl.textContent = '', 2500);
+
+            // ─── Update currentData in-memory so the group row refreshes correctly ───
+            currentData.forEach(r => {
+                if (!r.expense_details) return;
+                r.expense_details.forEach(e => {
+                    if (e.id == expId) {
+                        e.expense_type     = data.expense_type;
+                        e.amount           = data.amount;
+                        e.litre            = data.litre;
+                        e.approval_status  = data.approval_status;
+                    }
+                });
+                // Recalculate aggregated amounts on the trip record
+                if (r.id == tripId) {
+                    r.gas_amt    = r.expense_details.filter(e=>e.expense_type==='gasoline').reduce((s,e)=>s+parseFloat(e.amount||0),0)||null;
+                    r.gas_litre  = r.expense_details.filter(e=>e.expense_type==='gasoline').reduce((s,e)=>s+parseFloat(e.litre||0),0)||null;
+                    r.toll_amt   = r.expense_details.filter(e=>e.expense_type==='toll').reduce((s,e)=>s+parseFloat(e.amount||0),0)||null;
+                    r.lunch_amt  = r.expense_details.filter(e=>e.expense_type==='lunch').reduce((s,e)=>s+parseFloat(e.amount||0),0)||null;
+                    r.others_amt = r.expense_details.filter(e=>e.expense_type==='others').reduce((s,e)=>s+parseFloat(e.amount||0),0)||null;
+                    r.parking_amt= r.expense_details.filter(e=>e.expense_type==='parking').reduce((s,e)=>s+parseFloat(e.amount||0),0)||null;
+                    const allApproved = r.expense_details.every(e=>e.approval_status==='approved');
+                    r.passenger_approval = allApproved ? 'approved' : 'pending';
+                }
+            });
+
+            // ─── Find the group row DOM element and update only the affected columns ───
+            const viewMode = document.getElementById('report-view-mode').value;
+            if (viewMode === 'group') {
+                // Recalculate group totals from updated currentData
+                const key = _groupEditCtx.rowKey;
+                const [gDriverId, gDate] = key.split('_');
+                let gas=0, toll=0, others=0, parking=0, lunch=0, allApproved=true;
+                currentData.forEach(r => {
+                    if (r.driver_id == gDriverId && r.shift_date === gDate) {
+                        gas     += parseFloat(r.gas_amt)||0;
+                        toll    += parseFloat(r.toll_amt)||0;
+                        others  += parseFloat(r.others_amt)||0;
+                        parking += parseFloat(r.parking_amt)||0;
+                        lunch   += parseFloat(r.lunch_amt)||0;
+                        if (!(r.expense_details||[]).every(e=>e.approval_status==='approved')) {
+                            allApproved = false;
+                        }
+                    }
+                });
+                const total = gas+toll+others+parking+lunch;
+                const fmt   = v => v ? 'Rp '+parseInt(v).toLocaleString() : '-';
+
+                // Find the row by searching all tbody tr cells for matching driver+date
+                document.querySelectorAll('#reportContent tr').forEach(tr => {
+                    const cells = tr.querySelectorAll('td');
+                    if (cells.length >= 8) {
+                        // cells[0]=driver, cells[1]=date
+                        const rowDate = cells[1] ? cells[1].textContent.trim() : '';
+                        if (rowDate === gDate) {
+                            cells[3].textContent = fmt(gas);
+                            cells[4].textContent = fmt(toll);
+                            cells[5].textContent = fmt(others+parking);
+                            cells[6].textContent = fmt(lunch);
+                            cells[7].textContent = 'Rp '+parseInt(total).toLocaleString();
+                            cells[8].innerHTML   = allApproved
+                                ? '<span style="color:#166534;font-weight:700;font-size:1.1rem;">✔</span>'
+                                : '<span style="color:#94a3b8;font-weight:500;">-</span>';
+                            // Show/hide Approve All button
+                            const actionCell = cells[9];
+                            if (actionCell) {
+                                let btnHtml = '';
+                                if (!allApproved) {
+                                    btnHtml += `<button onclick="approveGroupAdmin(${gDriverId}, '${gDate}')" style="background:#10b981;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:bold;margin-right:6px;">Approve All</button>`;
+                                }
+                                btnHtml += `<button onclick="viewGroupDetails(${gDriverId}, '${gDate}')" style="background:#3b82f6;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:0.75rem;font-weight:bold;">Detail</button>`;
+                                actionCell.innerHTML = btnHtml;
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        function closeGroupEditModal() {
+            document.getElementById('groupEditModal').style.display = 'none';
+        }
     </script>
+
+    <!-- Group Edit Modal -->
+    <div id="groupEditModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto;">
+        <div style="background:var(--card-bg);border-radius:14px;width:100%;max-width:900px;box-shadow:0 20px 60px rgba(0,0,0,0.3);overflow:hidden;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;background:rgba(17,141,255,0.06);border-bottom:1px solid var(--glass-border);">
+                <h2 id="groupEditTitle" style="margin:0;font-size:1.05rem;color:var(--pbi-blue);">✏️ Edit Group Expenses</h2>
+                <button onclick="closeGroupEditModal()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--text-secondary);line-height:1;">&times;</button>
+            </div>
+            <div id="groupEditBody" style="padding:20px;max-height:75vh;overflow-y:auto;">
+                <!-- Trips will be rendered here -->
+            </div>
+            <div style="padding:12px 22px;border-top:1px solid var(--glass-border);text-align:right;">
+                <button onclick="closeGroupEditModal()" style="background:#e2e8f0;color:#475569;border:none;padding:8px 18px;border-radius:6px;font-weight:600;cursor:pointer;">Close</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
