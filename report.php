@@ -1755,38 +1755,110 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
             renderReportTable();
         }
 
+        // -------------------------------------------------------
+        // FILTER STATE PERSISTENCE via localStorage
+        // Keyed per-user so different admins don't share state.
+        // Cleared automatically on logout (see logout handler below).
+        // -------------------------------------------------------
+        const FILTER_KEY = 'report_filters_uid_<?= $_SESSION['user_id'] ?? '0' ?>';
+
+        function saveFilterState() {
+            const state = {
+                driver_id:    document.getElementById('driver_id').value,
+                start_date:   document.getElementById('start_date').value,
+                end_date:     document.getElementById('end_date').value,
+                report_year:  document.getElementById('report_year').value,
+                view_mode:    document.getElementById('report-view-mode').value,
+                sort:         document.getElementById('report-sort').value,
+                status:       document.getElementById('report-filter-status').value,
+                search:       document.getElementById('report-search').value,
+                page_size:    pageSize,
+                active_tab:   activeTab,
+            };
+            localStorage.setItem(FILTER_KEY, JSON.stringify(state));
+        }
+
+        function restoreFilterState() {
+            const raw = localStorage.getItem(FILTER_KEY);
+            if (!raw) return false;
+            try {
+                const state = JSON.parse(raw);
+                if (state.driver_id  !== undefined) document.getElementById('driver_id').value           = state.driver_id;
+                if (state.start_date !== undefined) document.getElementById('start_date').value          = state.start_date;
+                if (state.end_date   !== undefined) document.getElementById('end_date').value            = state.end_date;
+                if (state.report_year!== undefined) document.getElementById('report_year').value         = state.report_year;
+                if (state.view_mode  !== undefined) document.getElementById('report-view-mode').value    = state.view_mode;
+                if (state.sort       !== undefined) document.getElementById('report-sort').value         = state.sort;
+                if (state.status     !== undefined) document.getElementById('report-filter-status').value= state.status;
+                if (state.search     !== undefined) document.getElementById('report-search').value       = state.search;
+                if (state.page_size  !== undefined) pageSize = parseInt(state.page_size);
+                if (state.active_tab !== undefined) {
+                    activeTab = state.active_tab;
+                    // Sync tab UI
+                    document.querySelectorAll('.tab-btn').forEach(btn => {
+                        btn.classList.toggle('active', btn.dataset.tab === activeTab);
+                    });
+                    document.querySelectorAll('.tab-content').forEach(sec => {
+                        sec.style.display = sec.id === (activeTab === 'detail' ? 'detailTabContent' : 'annualTabContent') ? 'block' : 'none';
+                    });
+                }
+                return true;
+            } catch(e) {
+                return false;
+            }
+        }
+
         // Attach listeners for interactive auto-updating controls and initial generation
         document.addEventListener('DOMContentLoaded', () => {
+            // Restore saved filter state (if any)
+            restoreFilterState();
+
             // Auto-trigger AJAX generation when main filters change
             document.getElementById('driver_id').addEventListener('change', () => {
+                saveFilterState();
                 if (activeTab === 'detail') generateReport(); else generateAnnualReport();
             });
             document.getElementById('start_date').addEventListener('change', () => {
+                saveFilterState();
                 if (activeTab === 'detail') generateReport();
             });
             document.getElementById('end_date').addEventListener('change', () => {
+                saveFilterState();
                 if (activeTab === 'detail') generateReport();
             });
             document.getElementById('report_year').addEventListener('change', () => {
+                saveFilterState();
                 if (activeTab === 'annual') generateAnnualReport();
             });
 
             // Client-side instant sort/filter/search updates
             document.getElementById('report-search').addEventListener('input', () => {
                 currentPage = 1;
+                saveFilterState();
                 renderReportTable();
             });
             document.getElementById('report-sort').addEventListener('change', () => {
                 currentPage = 1;
+                saveFilterState();
                 renderReportTable();
             });
             document.getElementById('report-filter-status').addEventListener('change', () => {
                 currentPage = 1;
+                saveFilterState();
+                renderReportTable();
+            });
+            document.getElementById('report-view-mode').addEventListener('change', () => {
+                currentPage = 1;
+                saveFilterState();
                 renderReportTable();
             });
 
             // Automatically load initial report on page open
-            generateReport();
+            if (activeTab === 'detail') {
+                generateReport();
+            } else {
+                generateAnnualReport();
+            }
         });
     </script>
     </form>
