@@ -650,31 +650,35 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
 
             // Update Dashboard Counters based on currentData (all loaded records)
             const totalTx = currentData.length;
-            const uncheckedTx = currentData.filter(r => {
-                return !(r.expense_details || []).every(e => e.approval_status === 'approved');
+            const checkedTx = currentData.filter(r => {
+                return (r.expense_details || []).every(e => e.approval_status === 'approved');
             }).length;
+            const uncheckedTx = totalTx - checkedTx;
             const totalCost = currentData.reduce((sum, r) => {
                 return sum + (parseFloat(r.gas_amt) || 0) + (parseFloat(r.toll_amt) || 0) + (parseFloat(r.others_amt) || 0) + (parseFloat(r.parking_amt) || 0) + (parseFloat(r.lunch_amt) || 0);
             }, 0);
 
             document.getElementById('dash-total-tx').innerText = totalTx;
-            document.getElementById('dash-unchecked-tx').innerText = uncheckedTx;
             document.getElementById('dash-total-cost').innerText = 'Rp ' + totalCost.toLocaleString();
             
             const uncheckedCard = document.getElementById('dash-unchecked-card');
             if (uncheckedCard) {
                 if (uncheckedTx > 0) {
+                    // Still has pending items — show red warning
+                    document.getElementById('dash-unchecked-tx').innerText = uncheckedTx;
                     uncheckedCard.style.background = 'rgba(225, 29, 72, 0.08)';
                     uncheckedCard.style.borderColor = '#e11d48';
                     uncheckedCard.querySelector('span').style.color = '#e11d48';
                     uncheckedCard.querySelector('strong').style.color = '#e11d48';
                     uncheckedCard.querySelector('span').innerHTML = '⚠️ ' + (lang === 'id' ? 'Belum Dicek' : 'Unchecked (Pending)');
                 } else {
+                    // All approved — show green with total approved count
+                    document.getElementById('dash-unchecked-tx').innerText = checkedTx;
                     uncheckedCard.style.background = 'rgba(16, 185, 129, 0.05)';
                     uncheckedCard.style.borderColor = 'rgba(16, 185, 129, 0.2)';
                     uncheckedCard.querySelector('span').style.color = '#10b981';
                     uncheckedCard.querySelector('strong').style.color = '#10b981';
-                    uncheckedCard.querySelector('span').innerHTML = '✔ ' + (lang === 'id' ? 'Semua Beres' : 'All Checked');
+                    uncheckedCard.querySelector('span').innerHTML = '✔ ' + (lang === 'id' ? 'Semua Sudah Dicek' : 'All Checked ✔');
                 }
             }
 
