@@ -117,8 +117,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                        t.passenger_approval, d.name as dest_name, p.name as pass_name
                 FROM trips t
                 JOIN shifts s ON t.shift_id = s.id
-                LEFT JOIN destinations d ON t.destination_id = d.id
-                LEFT JOIN passengers p ON t.passenger_id = p.id
+                LEFT JOIN master_destinations d ON t.destination_id = d.id
+                LEFT JOIN master_passengers p ON t.passenger_id = p.id
                 WHERE s.driver_id = ? AND s.shift_date = ? AND t.status = 'completed'
                 ORDER BY t.start_time ASC
             ");
