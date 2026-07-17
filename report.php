@@ -511,6 +511,7 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                             </tr>
                         </thead>
                         <tbody id="reportContent"></tbody>
+                        <tfoot id="reportTfoot"></tfoot>
                     </table>
                 </div>
                 <!-- Pagination container -->
@@ -971,7 +972,35 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 }).join('');
             }
 
-            // 5. Render Pagination Controls
+            // 5b. Add TOTAL footer row (group mode only)
+            const tfoot = document.getElementById('reportTfoot');
+            if (tfoot) {
+                if (viewMode === 'group') {
+                    let totGas = 0, totToll = 0, totOthers = 0, totLunch = 0, totCost = 0;
+                    pageData.forEach(g => {
+                        totGas   += g.gas_amt    || 0;
+                        totToll  += g.toll_amt   || 0;
+                        totOthers+= (g.others_amt || 0) + (g.parking_amt || 0);
+                        totLunch += g.lunch_amt  || 0;
+                        totCost  += (g.gas_amt||0) + (g.toll_amt||0) + (g.others_amt||0) + (g.parking_amt||0) + (g.lunch_amt||0);
+                    });
+                    const fmt = v => v ? 'Rp ' + parseInt(v).toLocaleString() : '-';
+                    tfoot.innerHTML = `
+                        <tr style="background: rgba(17,141,255,0.07); font-weight: 700; font-size: 0.82rem; border-top: 2px solid var(--pbi-blue);">
+                            <td colspan="3" style="padding: 8px 10px; color: var(--pbi-blue); text-transform: uppercase; letter-spacing: 0.05em;">TOTAL (${pageData.length} groups)</td>
+                            <td align="right" style="padding: 8px 10px; color: var(--pbi-blue);">${fmt(totGas)}</td>
+                            <td align="right" style="padding: 8px 10px; color: var(--pbi-blue);">${fmt(totToll)}</td>
+                            <td align="right" style="padding: 8px 10px; color: var(--pbi-blue);">${fmt(totOthers)}</td>
+                            <td align="right" style="padding: 8px 10px; color: var(--pbi-blue);">${fmt(totLunch)}</td>
+                            <td align="right" style="padding: 8px 10px; color: #059669; font-size: 0.88rem;">Rp ${parseInt(totCost).toLocaleString()}</td>
+                            <td colspan="2" style="padding: 8px 10px;"></td>
+                        </tr>`;
+                } else {
+                    tfoot.innerHTML = '';
+                }
+            }
+
+
             const infoText = totalEntries > 0 ? `Showing ${startIndex + 1} to ${endIndex} of ${totalEntries} entries` : 'Showing 0 to 0 of 0 entries';
             
             let pageButtons = '';
