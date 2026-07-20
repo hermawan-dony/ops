@@ -7,6 +7,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 }
 
 $theme = $_SESSION['theme'] ?? 'light';
+$is_collapsed = isset($_SESSION['sidebar_collapsed']) && $_SESSION['sidebar_collapsed'];
 
 // Fetch drivers list
 $stmt = $pdo->query("SELECT id, full_name FROM users WHERE role = 'driver' ORDER BY full_name ASC");
@@ -33,6 +34,62 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 
     <style>
+        :root {
+            --pbi-blue: #118DFF; --pbi-bg: #F3F2F1; --pbi-dark: #333;
+            --sidebar-w: 240px; --sidebar-collapsed: 70px;
+            --card-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,0.132), 0 0.3px 0.9px 0 rgba(0,0,0,0.108);
+        }
+        .dark-mode { --pbi-bg: #1e293b; --pbi-dark: #f8fafc; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--pbi-bg); margin: 0; display: flex; transition: all 0.3s; color: var(--pbi-dark); }
+        .sidebar { width: var(--sidebar-w); background: var(--card-bg); height: 100vh; position: fixed; border-right: 1px solid var(--glass-border); transition: width 0.3s; overflow: hidden; z-index: 1001; }
+        body.collapsed .sidebar { width: var(--sidebar-collapsed); }
+        .sidebar-header { padding: 20px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--glass-border); }
+        .sidebar-brand { font-weight: 700; color: var(--pbi-blue); white-space: nowrap; }
+        body.collapsed .sidebar-brand { display: none; }
+        .toggle-btn { cursor: pointer; padding: 5px; border: 1px solid var(--glass-border); background: var(--card-bg); border-radius: 4px; color: var(--text-primary); }
+        .nav-item { display: flex; align-items: center; padding: 12px 16px; margin: 4px 16px; border-radius: 8px; text-decoration: none; color: var(--text-secondary); font-size: 0.95rem; font-weight: 500; transition: all 0.2s ease; }
+        .nav-item:hover { background: rgba(17, 141, 255, 0.05); color: var(--pbi-blue); }
+        .nav-item.active { background: linear-gradient(90deg, rgba(17,141,255,0.1) 0%, rgba(17,141,255,0.02) 100%); color: var(--pbi-blue); border-left: 4px solid var(--pbi-blue); margin-left: 12px; font-weight: 700; box-shadow: 0 2px 5px rgba(0,0,0,0.02); }
+        .nav-icon { min-width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; margin-right: 12px; font-size: 1.1rem; background: var(--card-bg); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid var(--glass-border); transition: all 0.2s; }
+        .nav-item.active .nav-icon { background: var(--pbi-blue); border: none; box-shadow: 0 4px 8px rgba(17,141,255,0.3); color: #fff; }
+        
+        body.collapsed .nav-item { margin: 4px 10px; justify-content: center; padding: 12px; }
+        body.collapsed .nav-item.active { margin-left: 10px; border-left: none; }
+        body.collapsed .nav-icon { margin-right: 0; }
+        body.collapsed .nav-item span { display: none; }
+        
+        @media (max-width: 768px) {
+            .sidebar { width: var(--sidebar-collapsed); }
+            .sidebar-brand { display: none; }
+            .nav-item span { display: none; }
+            .nav-item { margin: 4px 10px; justify-content: center; padding: 12px; }
+            .nav-item.active { margin-left: 10px; border-left: none; }
+            .nav-icon { margin-right: 0; }
+            .main-content { margin-left: var(--sidebar-collapsed); padding: 10px; }
+            .lang-theme-footer { padding: 10px; }
+            .lang-theme-footer a { font-size: 0.65rem !important; }
+        }
+
+        .main-content { margin-left: var(--sidebar-w); flex: 1; padding: 16px; transition: margin-left 0.3s; }
+        body.collapsed .main-content { margin-left: var(--sidebar-collapsed); }
+
+        .report-filter-card { background: var(--card-bg); padding: 16px; border-radius: 8px; box-shadow: var(--card-shadow); border: 1px solid var(--glass-border); }
+        .pbi-form-group { flex: 1; min-width: 200px; }
+        .pbi-label { display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 8px; }
+        .pbi-input { width: 100%; padding: 8px; border: 1px solid var(--glass-border); border-radius: 4px; font-family: inherit; font-size: 0.9rem; background: var(--bg-color); color: var(--text-primary); box-sizing: border-box; }
+        
+        .btn-generate { background: var(--pbi-blue); color: #fff; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-weight: 700; height: 38px; white-space: nowrap; }
+        .btn-export { border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 0.85rem; color: #fff; }
+        
+        .pbi-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+        .pbi-table th { text-align: center; padding: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.02); color: var(--text-secondary); }
+        .pbi-table td { padding: 6px; border: 1px solid var(--glass-border); color: var(--text-primary); }
+
+        .btn-action { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600; text-decoration: none; display: inline-block; }
+        .btn-edit { background: #f0f9ff; color: #118DFF; margin-right: 5px; }
+
+        .lang-theme-footer { position: absolute; bottom: 0; width: 100%; padding: 20px; border-top: 1px solid var(--glass-border); background: var(--card-bg); }
+
         .kpi-container {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -131,7 +188,7 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
         }
     </style>
 </head>
-<body class="<?php echo $theme === 'dark' ? 'dark-mode' : ''; ?>">
+<body class="<?php echo $is_collapsed ? 'collapsed' : ''; ?>">
 
     <?php include 'sidemenu.php'; ?>
 
