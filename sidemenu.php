@@ -81,7 +81,8 @@ body.collapsed .lang-theme-footer .pref-actions a {
     <nav style="padding: 10px 0;">
         <a href="admin.php" class="nav-item <?= $current_page === 'admin.php' ? 'active' : '' ?>"><div class="nav-icon">📊</div><span>Dashboard</span></a>
         <a href="master_data.php" class="nav-item <?= $current_page === 'master_data.php' ? 'active' : '' ?>"><div class="nav-icon">📁</div><span><?php echo __('master_data'); ?></span></a>
-        <a href="report.php" class="nav-item <?= $current_page === 'report.php' ? 'active' : '' ?>"><div class="nav-icon">📝</div><span><?php echo __('reports'); ?></span></a>
+        <a href="report.php" class="nav-item <?= $current_page === 'report.php' ? 'active' : '' ?>"><div class="nav-icon">📝</div><span><?php echo __('verify_claims'); ?></span></a>
+        <a href="cost_report.php" class="nav-item <?= $current_page === 'cost_report.php' ? 'active' : '' ?>"><div class="nav-icon">📊</div><span><?php echo __('cost_reports'); ?></span></a>
         <a href="attendance_report.php" class="nav-item <?= $current_page === 'attendance_report.php' ? 'active' : '' ?>"><div class="nav-icon">⏰</div><span><?php echo __('attendance'); ?></span></a>
     </nav>
 

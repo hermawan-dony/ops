@@ -84,7 +84,15 @@ function __($key) {
             'wa_placeholder' => 'Example: 6285678910112',
             'manual_usage' => 'User Manual',
             'backup_database' => 'Backup Database',
-            'factory_reset_data' => 'Factory Reset Data'
+            'factory_reset_data' => 'Factory Reset Data',
+            'verify_claims' => 'Verify Claims',
+            'cost_reports' => 'Cost Reports',
+            'annual_spending' => 'Annual Spending',
+            'avg_monthly_spend' => 'Avg Monthly Spend',
+            'peak_month' => 'Peak Month',
+            'top_category' => 'Top Category',
+            'driver_share' => 'Driver Cost Contribution',
+            'vehicle_efficiency' => 'Vehicle Operating Summary'
         ],
         'id' => [
             'app_name' => 'framas Transport App',
@@ -168,7 +176,15 @@ function __($key) {
             'wa_placeholder' => 'Contoh: 6285678910112',
             'manual_usage' => 'Manual Penggunaan',
             'backup_database' => 'Backup Database',
-            'factory_reset_data' => 'Factory Reset Data'
+            'factory_reset_data' => 'Factory Reset Data',
+            'verify_claims' => 'Verifikasi Biaya',
+            'cost_reports' => 'Laporan Biaya',
+            'annual_spending' => 'Total Pengeluaran Setahun',
+            'avg_monthly_spend' => 'Rata-rata Bulanan',
+            'peak_month' => 'Bulan Tertinggi',
+            'top_category' => 'Kategori Terbesar',
+            'driver_share' => 'Peringkat Biaya Per Driver',
+            'vehicle_efficiency' => 'Biaya Operasional per Mobil'
         ]
     ];
     return $translations[$lang][$key] ?? $key;

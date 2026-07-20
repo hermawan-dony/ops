@@ -109,5 +109,51 @@ if ($action === 'summary') {
     header('Content-Type: application/json');
     echo json_encode($data);
     exit;
+} elseif ($action === 'driver_share') {
+    $sql = "SELECT 
+                u.id as driver_id,
+                u.full_name as driver_name,
+                SUM(e.amount) as total_amount
+            FROM trip_expenses e
+            JOIN trips t ON e.trip_id = t.id
+            JOIN shifts s ON t.shift_id = s.id
+            JOIN users u ON s.driver_id = u.id
+            WHERE YEAR(t.start_time) = ? AND t.passenger_approval = 'approved'";
+    $params = [$year];
+    if ($driver_id !== 'ALL') {
+        $sql .= " AND u.id = ?";
+        $params[] = $driver_id;
+    }
+    $sql .= " GROUP BY u.id ORDER BY total_amount DESC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit;
+} elseif ($action === 'vehicle_efficiency') {
+    $sql = "SELECT 
+                c.car_no,
+                c.model as car_model,
+                SUM(CASE WHEN e.expense_type = 'gasoline' THEN e.amount ELSE 0 END) as gasoline,
+                SUM(CASE WHEN e.expense_type = 'toll' THEN e.amount ELSE 0 END) as toll,
+                SUM(CASE WHEN e.expense_type = 'parking' THEN e.amount ELSE 0 END) as parking,
+                SUM(e.amount) as total_amount
+            FROM trip_expenses e
+            JOIN trips t ON e.trip_id = t.id
+            JOIN master_cars c ON t.car_id = c.id
+            JOIN shifts s ON t.shift_id = s.id
+            JOIN users u ON s.driver_id = u.id
+            WHERE YEAR(t.start_time) = ? AND t.passenger_approval = 'approved'";
+    $params = [$year];
+    if ($driver_id !== 'ALL') {
+        $sql .= " AND u.id = ?";
+        $params[] = $driver_id;
+    }
+    $sql .= " GROUP BY c.id ORDER BY total_amount DESC";
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    header('Content-Type: application/json');
+    echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
+    exit;
 }
 ?>
