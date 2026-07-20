@@ -402,7 +402,7 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                     <div id="groupAnnualExpenseType" class="pbi-form-group" style="display: none;">
                         <label class="pbi-label"><?php echo $_SESSION['lang'] == 'id' ? 'Biaya' : 'Expense Type'; ?></label>
                         <select id="annual_expense_type" class="pbi-input" onchange="if(annualData.length > 0) renderAnnualChart();">
-                            <option value="ALL"><?php echo $_SESSION['lang'] == 'id' ? '[ Semua Biaya (Stacked) ]' : '[ All Expenses (Stacked) ]'; ?></option>
+                            <option value="ALL"><?php echo $_SESSION['lang'] == 'id' ? '[ Semua Biaya (Spline) ]' : '[ All Expenses (Spline) ]'; ?></option>
                             <option value="gasoline">Gasoline (BBM)</option>
                             <option value="toll">Toll</option>
                             <option value="parking">Parking</option>
@@ -1121,23 +1121,76 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 const othersData = annualData.map(r => r.others);
 
                 annualChart = new Chart(ctx, {
-                    type: 'bar',
+                    type: 'line',
                     data: {
                         labels: monthLabels,
                         datasets: [
-                            { label: 'Gasoline', data: gasolineData, backgroundColor: '#3b82f6' },
-                            { label: 'Toll', data: tollData, backgroundColor: '#10b981' },
-                            { label: 'Parking', data: parkingData, backgroundColor: '#f59e0b' },
-                            { label: 'Lunch', data: lunchData, backgroundColor: '#ec4899' },
-                            { label: 'Others', data: othersData, backgroundColor: '#6b7280' }
+                            { 
+                                label: 'Gasoline', 
+                                data: gasolineData, 
+                                borderColor: '#3b82f6', 
+                                backgroundColor: '#3b82f615',
+                                tension: 0.4, 
+                                borderWidth: 3, 
+                                pointRadius: 4,
+                                pointHoverRadius: 6,
+                                fill: false
+                            },
+                            { 
+                                label: 'Toll', 
+                                data: tollData, 
+                                borderColor: '#10b981', 
+                                backgroundColor: '#10b98115',
+                                tension: 0.4, 
+                                borderWidth: 3, 
+                                pointRadius: 4,
+                                pointHoverRadius: 6,
+                                fill: false
+                            },
+                            { 
+                                label: 'Parking', 
+                                data: parkingData, 
+                                borderColor: '#f59e0b', 
+                                backgroundColor: '#f59e0b15',
+                                tension: 0.4, 
+                                borderWidth: 3, 
+                                pointRadius: 4,
+                                pointHoverRadius: 6,
+                                fill: false
+                            },
+                            { 
+                                label: 'Lunch', 
+                                data: lunchData, 
+                                borderColor: '#ec4899', 
+                                backgroundColor: '#ec489915',
+                                tension: 0.4, 
+                                borderWidth: 3, 
+                                pointRadius: 4,
+                                pointHoverRadius: 6,
+                                fill: false
+                            },
+                            { 
+                                label: 'Others', 
+                                data: othersData, 
+                                borderColor: '#6b7280', 
+                                backgroundColor: '#6b728015',
+                                tension: 0.4, 
+                                borderWidth: 3, 
+                                pointRadius: 4,
+                                pointHoverRadius: 6,
+                                fill: false
+                            }
                         ]
                     },
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
                         scales: {
-                            x: { stacked: true },
-                            y: { stacked: true, ticks: { callback: (val) => 'Rp ' + val.toLocaleString() } }
+                            x: { grid: { display: false } },
+                            y: { 
+                                grid: { color: 'rgba(0,0,0,0.05)' },
+                                ticks: { callback: (val) => 'Rp ' + val.toLocaleString() } 
+                            }
                         },
                         plugins: {
                             tooltip: {
