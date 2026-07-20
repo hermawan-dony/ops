@@ -210,7 +210,7 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                 <!-- Select Year -->
                 <div class="pbi-form-group">
                     <label class="pbi-label">Select Year</label>
-                    <select id="report_year" class="pbi-input" onchange="loadDashboardData()">
+                    <select id="report_year" class="pbi-input">
                         <?php 
                         $current_year = date('Y');
                         for ($y = $current_year; $y >= $current_year - 5; $y--): ?>
@@ -222,7 +222,7 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                 <!-- Select Driver -->
                 <div class="pbi-form-group">
                     <label class="pbi-label">Select Driver</label>
-                    <select id="driver_id" class="pbi-input" onchange="loadDashboardData()">
+                    <select id="driver_id" class="pbi-input">
                         <option value="ALL">[ ALL DRIVERS ]</option>
                         <?php foreach($drivers as $d): ?>
                             <option value="<?php echo $d['id']; ?>"><?php echo htmlspecialchars($d['full_name']); ?></option>
@@ -243,6 +243,9 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                         <option value="total_amount">Total Amount</option>
                     </select>
                 </div>
+
+                <!-- Generate button -->
+                <button type="button" onclick="loadDashboardData()" class="btn-generate" style="height: 38px; padding: 0 20px; font-weight: bold;">Generate Report</button>
             </form>
         </div>
 
