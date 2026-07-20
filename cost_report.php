@@ -769,12 +769,6 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             document.getElementById('monthlyDetailsModal').style.display = 'none';
         }
 
-        @media (max-width: 900px) {
-            .tables-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-
         function openImageViewer(src) {
             document.getElementById('fullImageView').src = src;
             document.getElementById('imageViewerModal').style.display = 'block';
