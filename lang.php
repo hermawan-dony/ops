@@ -85,7 +85,7 @@ function __($key) {
             'manual_usage' => 'User Manual',
             'backup_database' => 'Backup Database',
             'factory_reset_data' => 'Factory Reset Data',
-            'verify_claims' => 'Verify Claims',
+            'verify_claims' => 'Verify Cost',
             'cost_reports' => 'Cost Reports',
             'annual_spending' => 'Annual Spending',
             'avg_monthly_spend' => 'Avg Monthly Spend',
