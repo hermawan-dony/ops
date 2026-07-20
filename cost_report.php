@@ -186,6 +186,8 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             padding: 20px;
             box-shadow: var(--card-shadow);
         }
+        .modal { display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); overflow-y: auto; align-items: center; justify-content: center; }
+        .modal-content { background: var(--card-bg); margin: auto; padding: 24px; border-radius: 12px; width: 500px; max-width: 90%; border: 1px solid var(--glass-border); }
     </style>
 </head>
 <body class="<?php echo $is_collapsed ? 'collapsed' : ''; ?>">
@@ -225,6 +227,20 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
                         <?php foreach($drivers as $d): ?>
                             <option value="<?php echo $d['id']; ?>"><?php echo htmlspecialchars($d['full_name']); ?></option>
                         <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <!-- Expense Type -->
+                <div class="pbi-form-group">
+                    <label class="pbi-label"><?php echo $_SESSION['lang'] == 'id' ? 'Biaya' : 'Expense Type'; ?></label>
+                    <select id="annual_expense_type" class="pbi-input" onchange="renderCharts()">
+                        <option value="ALL"><?php echo $_SESSION['lang'] == 'id' ? '[ Semua Biaya (Spline) ]' : '[ All Expenses (Spline) ]'; ?></option>
+                        <option value="gasoline">Gasoline (BBM)</option>
+                        <option value="toll">Toll</option>
+                        <option value="parking">Parking</option>
+                        <option value="lunch">Lunch (Uang Makan)</option>
+                        <option value="others">Others (Lain-lain)</option>
+                        <option value="total_amount">Total Amount</option>
                     </select>
                 </div>
             </form>
@@ -495,38 +511,100 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
             if (doughnutChart) doughnutChart.destroy();
 
             const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            
-            // Build datasets for spline chart
-            const gasolineData = annualData.map(r => r.gasoline);
-            const tollData = annualData.map(r => r.toll);
-            const parkingData = annualData.map(r => r.parking);
-            const lunchData = annualData.map(r => r.lunch);
-            const othersData = annualData.map(r => r.others);
+            const expenseType = document.getElementById('annual_expense_type').value;
 
-            splineChart = new Chart(splineCtx, {
-                type: 'line',
-                data: {
-                    labels: monthLabels,
-                    datasets: [
-                        { label: 'Gasoline', data: gasolineData, borderColor: '#3b82f6', backgroundColor: '#3b82f615', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
-                        { label: 'Toll', data: tollData, borderColor: '#10b981', backgroundColor: '#10b98115', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
-                        { label: 'Parking', data: parkingData, borderColor: '#f59e0b', backgroundColor: '#f59e0b15', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
-                        { label: 'Lunch', data: lunchData, borderColor: '#ec4899', backgroundColor: '#ec489915', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
-                        { label: 'Others', data: othersData, borderColor: '#6b7280', backgroundColor: '#6b728015', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        x: { grid: { display: false } },
-                        y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: (val) => 'Rp ' + val.toLocaleString() } }
+            if (expenseType === 'ALL') {
+                const gasolineData = annualData.map(r => r.gasoline);
+                const tollData = annualData.map(r => r.toll);
+                const parkingData = annualData.map(r => r.parking);
+                const lunchData = annualData.map(r => r.lunch);
+                const othersData = annualData.map(r => r.others);
+
+                splineChart = new Chart(splineCtx, {
+                    type: 'line',
+                    data: {
+                        labels: monthLabels,
+                        datasets: [
+                            { label: 'Gasoline', data: gasolineData, borderColor: '#3b82f6', backgroundColor: '#3b82f615', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
+                            { label: 'Toll', data: tollData, borderColor: '#10b981', backgroundColor: '#10b98115', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
+                            { label: 'Parking', data: parkingData, borderColor: '#f59e0b', backgroundColor: '#f59e0b15', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
+                            { label: 'Lunch', data: lunchData, borderColor: '#ec4899', backgroundColor: '#ec489915', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false },
+                            { label: 'Others', data: othersData, borderColor: '#6b7280', backgroundColor: '#6b728015', tension: 0.4, borderWidth: 3, pointRadius: 4, fill: false }
+                        ]
                     },
-                    plugins: {
-                        tooltip: { callbacks: { label: (context) => `${context.dataset.label}: Rp ${context.raw.toLocaleString()}` } }
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            x: { grid: { display: false } },
+                            y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: (val) => 'Rp ' + val.toLocaleString() } }
+                        },
+                        plugins: {
+                            tooltip: { callbacks: { label: (context) => `${context.dataset.label}: Rp ${context.raw.toLocaleString()}` } }
+                        }
                     }
+                });
+            } else {
+                let datasetLabel = '';
+                let datasetColor = '#3b82f6';
+                let data = [];
+
+                if (expenseType === 'gasoline') {
+                    datasetLabel = 'Gasoline';
+                    datasetColor = '#3b82f6';
+                    data = annualData.map(r => r.gasoline);
+                } else if (expenseType === 'toll') {
+                    datasetLabel = 'Toll';
+                    datasetColor = '#10b981';
+                    data = annualData.map(r => r.toll);
+                } else if (expenseType === 'parking') {
+                    datasetLabel = 'Parking';
+                    datasetColor = '#f59e0b';
+                    data = annualData.map(r => r.parking);
+                } else if (expenseType === 'lunch') {
+                    datasetLabel = 'Lunch';
+                    datasetColor = '#ec4899';
+                    data = annualData.map(r => r.lunch);
+                } else if (expenseType === 'others') {
+                    datasetLabel = 'Others';
+                    datasetColor = '#6b7280';
+                    data = annualData.map(r => r.others);
+                } else if (expenseType === 'total_amount') {
+                    datasetLabel = 'Total Amount';
+                    datasetColor = '#118DFF';
+                    data = annualData.map(r => r.total_amount);
                 }
-            });
+
+                splineChart = new Chart(splineCtx, {
+                    type: 'line',
+                    data: {
+                        labels: monthLabels,
+                        datasets: [{
+                            label: datasetLabel,
+                            data: data,
+                            borderColor: datasetColor,
+                            backgroundColor: datasetColor + '15',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 3,
+                            pointRadius: 5,
+                            pointHoverRadius: 7
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: true },
+                            tooltip: { callbacks: { label: (context) => `${context.dataset.label}: Rp ${context.raw.toLocaleString()}` } }
+                        },
+                        scales: {
+                            x: { grid: { display: false } },
+                            y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: (val) => 'Rp ' + val.toLocaleString() } }
+                        }
+                    }
+                });
+            }
 
             // Sum totals for doughnut chart
             let totalGas = 0, totalToll = 0, totalParking = 0, totalLunch = 0, totalOthers = 0;
