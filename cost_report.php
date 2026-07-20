@@ -433,29 +433,37 @@ $pending_shifts_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE approval_
         let vehicleEfficiencyData = [];
 
         async function loadDashboardData() {
-            const formData = new FormData();
-            const driverId = document.getElementById('driver_id').value;
-            const year = document.getElementById('report_year').value;
-            formData.append('driver_id', driverId);
-            formData.append('year', year);
+            try {
+                const formData = new FormData();
+                const driverId = document.getElementById('driver_id').value;
+                const year = document.getElementById('report_year').value;
+                formData.append('driver_id', driverId);
+                formData.append('year', year);
 
-            // Fetch annual summary
-            const res = await fetch('api_get_annual_report.php?action=summary', { method: 'POST', body: formData });
-            annualData = await res.json();
+                // Fetch annual summary
+                const res = await fetch('api_get_annual_report.php?action=summary', { method: 'POST', body: formData });
+                if (!res.ok) throw new Error("HTTP error " + res.status);
+                annualData = await res.json();
 
-            // Fetch driver share
-            const resDriver = await fetch('api_get_annual_report.php?action=driver_share', { method: 'POST', body: formData });
-            driverShareData = await resDriver.json();
+                // Fetch driver share
+                const resDriver = await fetch('api_get_annual_report.php?action=driver_share', { method: 'POST', body: formData });
+                if (!resDriver.ok) throw new Error("HTTP error " + resDriver.status);
+                driverShareData = await resDriver.json();
 
-            // Fetch vehicle efficiency
-            const resVehicle = await fetch('api_get_annual_report.php?action=vehicle_efficiency', { method: 'POST', body: formData });
-            vehicleEfficiencyData = await resVehicle.json();
+                // Fetch vehicle efficiency
+                const resVehicle = await fetch('api_get_annual_report.php?action=vehicle_efficiency', { method: 'POST', body: formData });
+                if (!resVehicle.ok) throw new Error("HTTP error " + resVehicle.status);
+                vehicleEfficiencyData = await resVehicle.json();
 
-            updateKPICards();
-            renderCharts();
-            renderSummaryTable();
-            renderDriverShareTable();
-            renderVehicleEfficiencyTable();
+                updateKPICards();
+                renderCharts();
+                renderSummaryTable();
+                renderDriverShareTable();
+                renderVehicleEfficiencyTable();
+            } catch (err) {
+                console.error("Dashboard Load Error: ", err);
+                alert("Failed to load cost report data. Please make sure that 'api_get_annual_report.php' is fully uploaded to your cPanel hosting root.\n\nError details: " + err.message);
+            }
         }
 
         function updateKPICards() {
