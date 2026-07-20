@@ -71,14 +71,14 @@ try {
             FROM trip_expenses te
             JOIN trips t ON te.trip_id = t.id
             JOIN shifts s ON t.shift_id = s.id
-            WHERE s.shift_date < :cutoff AND te.approval_status != 'approved'
+            WHERE s.shift_date < :cutoff1 AND te.approval_status != 'approved'
             UNION
             SELECT s2.driver_id
             FROM shifts s2
-            WHERE s2.shift_date < :cutoff AND s2.approval_status != 'approved' AND s2.status = 'completed'
+            WHERE s2.shift_date < :cutoff2 AND s2.approval_status != 'approved' AND s2.status = 'completed'
         ) as tmp
     ");
-    $stmt_count_drivers->execute([':cutoff' => $cutoff_date]);
+    $stmt_count_drivers->execute([':cutoff1' => $cutoff_date, ':cutoff2' => $cutoff_date]);
     $pending_drivers = $stmt_count_drivers->fetchColumn();
 
 } catch (Exception $e) {
