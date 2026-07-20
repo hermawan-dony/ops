@@ -1947,16 +1947,8 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 if (state.status     !== undefined) document.getElementById('report-filter-status').value= state.status;
                 if (state.search     !== undefined) document.getElementById('report-search').value       = state.search;
                 if (state.page_size  !== undefined) pageSize = parseInt(state.page_size);
-                if (state.active_tab !== undefined) {
-                    activeTab = state.active_tab;
-                    // Sync tab UI
-                    document.querySelectorAll('.tab-btn').forEach(btn => {
-                        btn.classList.toggle('active', btn.dataset.tab === activeTab);
-                    });
-                    document.querySelectorAll('.tab-content').forEach(sec => {
-                        sec.style.display = sec.id === (activeTab === 'detail' ? 'detailTabContent' : 'annualTabContent') ? 'block' : 'none';
-                    });
-                }
+                // Always start on 'detail' tab on page open as requested by user
+                activeTab = 'detail';
                 return true;
             } catch(e) {
                 return false;
