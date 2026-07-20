@@ -81,7 +81,10 @@ function __($key) {
             'confirm_logout' => 'Logout?',
             'update_credentials_subtext' => 'Update security credentials',
             'wa_example_title' => 'WA number format must start with 628 (example: 6285678910112)',
-            'wa_placeholder' => 'Example: 6285678910112'
+            'wa_placeholder' => 'Example: 6285678910112',
+            'manual_usage' => 'User Manual',
+            'backup_database' => 'Backup Database',
+            'factory_reset_data' => 'Factory Reset Data'
         ],
         'id' => [
             'app_name' => 'framas Transport App',
@@ -162,7 +165,10 @@ function __($key) {
             'confirm_logout' => 'Apakah Anda yakin ingin keluar?',
             'update_credentials_subtext' => 'Perbarui kredensial keamanan',
             'wa_example_title' => 'Format nomor WA harus diawali 628 (contoh: 6285678910112)',
-            'wa_placeholder' => 'Contoh: 6285678910112'
+            'wa_placeholder' => 'Contoh: 6285678910112',
+            'manual_usage' => 'Manual Penggunaan',
+            'backup_database' => 'Backup Database',
+            'factory_reset_data' => 'Factory Reset Data'
         ]
     ];
     return $translations[$lang][$key] ?? $key;

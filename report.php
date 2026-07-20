@@ -255,6 +255,7 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
 <head>
     <meta charset="UTF-8">
     <title><?php echo __('reports'); ?> - framas Transport App</title>
+    <link rel="icon" type="image/png" href="icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>

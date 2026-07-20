@@ -97,13 +97,13 @@ body.collapsed .lang-theme-footer .pref-actions a {
         </div>
         
         <div class="pref-actions" style="margin-top: 20px; border-top: 1px dashed var(--glass-border); padding-top: 15px;">
-            <a href="docs.php" target="_blank" style="display:block; color: #8b5cf6; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">📖 <span>Manual Penggunaan</span></a>
-            <a href="admin_password.php" style="display:block; color: var(--pbi-blue); text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">🔑 <span>Ganti Password</span></a>
-            <a href="backup_db.php" style="display:block; color: #15803d; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">📦 <span>Backup Database</span></a>
+            <a href="docs.php" target="_blank" style="display:block; color: #8b5cf6; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">📖 <span><?php echo __('manual_usage'); ?></span></a>
+            <a href="admin_password.php" style="display:block; color: var(--pbi-blue); text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">🔑 <span><?php echo __('change_password_setting'); ?></span></a>
+            <a href="backup_db.php" style="display:block; color: #15803d; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">📦 <span><?php echo __('backup_database'); ?></span></a>
             <?php if ($current_page === 'admin.php'): ?>
-                <a href="reset_data.php" style="display:block; color: #b91c1c; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">⚠️ <span>Factory Reset Data</span></a>
+                <a href="reset_data.php" style="display:block; color: #b91c1c; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">⚠️ <span><?php echo __('factory_reset_data'); ?></span></a>
             <?php endif; ?>
-            <a href="logout.php" style="display:block; color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 700;">🚪 <span>Logout</span></a>
+            <a href="logout.php" style="display:block; color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 700;">🚪 <span><?php echo __('logout_setting'); ?></span></a>
         </div>
     </div>
 </div>

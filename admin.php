@@ -267,6 +267,7 @@ $theme = $_SESSION['theme'] ?? 'light';
 <head>
     <meta charset="UTF-8">
     <title>Analisa Data - <?php echo __('app_name'); ?></title>
+    <link rel="icon" type="image/png" href="icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -362,36 +363,7 @@ $theme = $_SESSION['theme'] ?? 'light';
 </head>
 <body class="<?php echo $is_collapsed ? 'collapsed' : ''; ?>">
 
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <div class="sidebar-brand">Transport Overview</div>
-            <div class="toggle-btn" onclick="toggleSidebar()">☰</div>
-        </div>
-        <nav style="padding: 10px 0;">
-            <a href="admin.php" class="nav-item active"><div class="nav-icon">📊</div><span>Dashboard</span></a>
-            <a href="master_data.php" class="nav-item"><div class="nav-icon">📁</div><span><?php echo __('master_data'); ?></span></a>
-            <a href="report.php" class="nav-item"><div class="nav-icon">📝</div><span><?php echo __('reports'); ?></span></a>
-            <a href="attendance_report.php" class="nav-item"><div class="nav-icon">⏰</div><span><?php echo __('attendance'); ?></span></a>
-        </nav>
-
-        <div class="lang-theme-footer">
-            <div style="font-size: 0.7rem; color: #999; margin-bottom: 10px; font-weight: 700;">PREFERENCES</div>
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <a href="?lang=en" style="text-decoration:none; color: <?php echo $_SESSION['lang']=='en'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">EN</a>
-                <a href="?lang=id" style="text-decoration:none; color: <?php echo $_SESSION['lang']=='id'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">ID</a>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <a href="?theme=light" style="text-decoration:none; font-size: 0.75rem; color: <?php echo $theme=='light'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">LIGHT</a>
-                <a href="?theme=dark" style="text-decoration:none; font-size: 0.75rem; color: <?php echo $theme=='dark'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">DARK</a>
-            </div>
-            
-            <div style="margin-top: 20px; border-top: 1px dashed var(--glass-border); padding-top: 15px;">
-                <a href="admin_password.php" style="display:block; color: var(--pbi-blue); text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">🔑 Ganti Password</a>
-                <a href="reset_data.php" style="display:block; color: #b91c1c; text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">⚠️ Factory Reset Data</a>
-                <a href="login.php" style="display:block; color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 700;">Logout</a>
-            </div>
-        </div>
-    </div>
+    <?php include 'sidemenu.php'; ?>
 
     <div class="main-content">
         <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom: 16px;">
@@ -817,17 +789,7 @@ $theme = $_SESSION['theme'] ?? 'light';
                             
                             let actionBtn = '';
                             if (t.passenger_approval === 'pending') {
-                                if (t.passenger_wa) {
-                                    if (!renderedSendButtons.includes(t.passenger_id)) {
-                                        actionBtn = `<button onclick="sendPassengerWA(${t.id}, this)" class="btn" style="padding:4px 8px; font-size:0.7rem; background:#107c10; color:white; border:none; border-radius:4px; cursor:pointer; margin-right:5px;">Send WA Request</button>`;
-                                        renderedSendButtons.push(t.passenger_id);
-                                    } else {
-                                        actionBtn = '<span style="color:#64748b; font-size:0.7rem; font-style:italic; margin-right:5px;">Grouped in WA</span>';
-                                    }
-                                } else {
-                                    actionBtn = '<span style="color:#999; font-size:0.7rem; margin-right:5px;">No Phone</span>';
-                                }
-                                actionBtn += `<button onclick="approveTripAsAdmin(${t.id}, this, ${shift.id})" class="btn" style="padding:4px 8px; font-size:0.7rem; background:#0078d4; color:white; border:none; border-radius:4px; cursor:pointer;">Approve as Admin</button>`;
+                                actionBtn = `<button onclick="approveTripAsAdmin(${t.id}, this, ${shift.id})" class="btn" style="padding:4px 8px; font-size:0.7rem; background:#0078d4; color:white; border:none; border-radius:4px; cursor:pointer;">Approve as Admin</button>`;
                             }
                             
                             return `

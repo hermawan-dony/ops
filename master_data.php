@@ -32,6 +32,7 @@ $is_iframe = isset($_GET['spfx_token']) || isset($_SESSION['is_iframe']);
 <head>
     <meta charset="UTF-8">
     <title><?php echo __('master_data'); ?> - <?php echo __('app_name'); ?></title>
+    <link rel="icon" type="image/png" href="icon.png">
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css?v=<?php echo time(); ?>">
     <style>
@@ -113,35 +114,7 @@ $is_iframe = isset($_GET['spfx_token']) || isset($_SESSION['is_iframe']);
 </head>
 <body class="<?php echo $is_collapsed ? 'collapsed' : ''; ?> <?php echo $is_iframe ? 'is-iframe' : ''; ?>">
 
-    <div class="sidebar">
-        <div class="sidebar-header">
-            <div class="sidebar-brand">Transport Overview</div>
-            <div class="toggle-btn" onclick="toggleSidebar()">☰</div>
-        </div>
-        <nav style="padding: 10px 0;">
-            <a href="admin.php" class="nav-item"><div class="nav-icon">📊</div><span>Dashboard</span></a>
-            <a href="master_data.php" class="nav-item active"><div class="nav-icon">📁</div><span><?php echo __('master_data'); ?></span></a>
-            <a href="report.php" class="nav-item"><div class="nav-icon">📝</div><span><?php echo __('reports'); ?></span></a>
-            <a href="attendance_report.php" class="nav-item"><div class="nav-icon">⏰</div><span><?php echo __('attendance'); ?></span></a>
-        </nav>
-
-        <div class="lang-theme-footer">
-            <div style="font-size: 0.7rem; color: #999; margin-bottom: 10px; font-weight: 700;">PREFERENCES</div>
-            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-                <a href="?lang=en" style="text-decoration:none; color: <?php echo $_SESSION['lang']=='en'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">EN</a>
-                <a href="?lang=id" style="text-decoration:none; color: <?php echo $_SESSION['lang']=='id'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">ID</a>
-            </div>
-            <div style="display: flex; gap: 10px;">
-                <a href="?theme=light" style="text-decoration:none; font-size: 0.75rem; color: <?php echo $theme=='light'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">LIGHT</a>
-                <a href="?theme=dark" style="text-decoration:none; font-size: 0.75rem; color: <?php echo $theme=='dark'?'var(--pbi-blue)':'#666'; ?>; font-weight: 700;">DARK</a>
-            </div>
-            
-            <div style="margin-top: 20px; border-top: 1px dashed var(--glass-border); padding-top: 15px;">
-                <a href="admin_password.php" style="display:block; color: var(--pbi-blue); text-decoration: none; font-size: 0.75rem; font-weight: 700; margin-bottom: 10px;">🔑 Ganti Password</a>
-                <a href="login.php" style="display:block; color: var(--text-secondary); text-decoration: none; font-size: 0.85rem; font-weight: 700;">Logout</a>
-            </div>
-        </div>
-    </div>
+    <?php include 'sidemenu.php'; ?>
 
     <div class="main-content">
         <div style="display:flex; justify-content: space-between; align-items:center; margin-bottom: 16px;">
@@ -290,6 +263,7 @@ $is_iframe = isset($_GET['spfx_token']) || isset($_SESSION['is_iframe']);
                         <th style="width: 40px;"><input type="checkbox" onclick="toggleSelectAll('passengers', this)"></th>
                         <th class="sortable-header" onclick="sortTable('passengers', 1)">Name</th>
                         <th class="sortable-header" onclick="sortTable('passengers', 2)">WA Number</th>
+                        <th class="sortable-header" onclick="sortTable('passengers', 3)">Email</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -299,6 +273,7 @@ $is_iframe = isset($_GET['spfx_token']) || isset($_SESSION['is_iframe']);
                         <td><input type="checkbox" class="select-row-passengers" value="<?php echo $p['id']; ?>" onchange="updateActionButtons('passengers')"></td>
                         <td><strong><?php echo htmlspecialchars($p['name']); ?></strong></td>
                         <td><?php echo htmlspecialchars($p['wa_no'] ?? '-'); ?></td>
+                        <td><?php echo htmlspecialchars($p['email'] ?? '-'); ?></td>
                         <td>
                             <button class="btn-action btn-edit" onclick="openEditModal('passenger', <?php echo htmlspecialchars(json_encode($p)); ?>)">Edit</button>
                             <a href="manage_master.php?type=passenger&action=delete&id=<?php echo $p['id']; ?>" class="btn-action btn-delete" onclick="return confirm('Apakah Anda yakin ingin menghapus penumpang: <?php echo htmlspecialchars($p['name'], ENT_QUOTES); ?>?')">Delete</a>
@@ -620,6 +595,7 @@ $is_iframe = isset($_GET['spfx_token']) || isset($_SESSION['is_iframe']);
                     html = `
                         <label class="pbi-label">Passenger Name</label><input type="text" name="name" class="pbi-input" required value="${data?data.name:''}">
                         <label class="pbi-label">WA Number (e.g. 628...)</label><input type="text" name="wa_no" class="pbi-input" required value="${data?data.wa_no:''}">
+                        <label class="pbi-label">Email</label><input type="email" name="email" class="pbi-input" value="${data && data.email ? data.email : ''}">
                     `;
                 } else if (type === 'holiday') {
                     html = `
