@@ -19,6 +19,38 @@ if ($mandatory_photo === false) {
     $mandatory_photo = '1';
 }
 
+if (isset($_GET['action']) && $_GET['action'] === 'fetch_hris_proxy') {
+    header('Content-Type: application/json');
+    $nik = $_GET['emp_cd'] ?? '';
+    $start = $_GET['start_date'] ?? '';
+    $end = $_GET['end_date'] ?? '';
+
+    $target_url = "https://api.framas.web.id/ops-ot/api.php?emp_cd=" . urlencode($nik) . "&start_date=" . urlencode($start) . "&end_date=" . urlencode($end);
+
+    $ch = curl_init($target_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($httpCode === 200 && !empty($response)) {
+        $json = json_decode($response, true);
+        if ($json) {
+            echo json_encode($json);
+            exit;
+        }
+    }
+
+    echo json_encode([
+        'status' => 'error',
+        'message' => 'Server API HRIS (api.framas.web.id) sedang tidak dapat dijangkau (HTTP ' . $httpCode . ' / Offline).'
+    ]);
+    exit;
+}
+
 $driver_id = $_SESSION['user_id'];
 $today = date('Y-m-d');
 
@@ -84,8 +116,24 @@ foreach ($cars as $c) {
     $car_last_km[$c['id']] = $last_km ? (int)$last_km : '';
 }
 
-// 5. Get History with Date Range
-$default_hist_start = date('Y-m-d', strtotime('-1 day'));
+$pref_car_no = '';
+$pref_car_km = '';
+if (!empty($driver_data['preferred_car_id'])) {
+    foreach ($cars as $c) {
+        if ($c['id'] == $driver_data['preferred_car_id']) {
+            $pref_car_no = $c['car_no'];
+            $pref_car_km = $car_last_km[$c['id']] ?? '';
+            break;
+        }
+    }
+}
+if (empty($pref_car_no) && count($cars) > 0) {
+    $pref_car_no = $cars[0]['car_no'];
+    $pref_car_km = $car_last_km[$cars[0]['id']] ?? '';
+}
+
+// 5. Get History with Date Range (1 week back up to TODAY)
+$default_hist_start = date('Y-m-d', strtotime('-6 days'));
 $default_hist_end = date('Y-m-d');
 
 $hist_start = $_GET['hist_start'] ?? $default_hist_start;
@@ -109,12 +157,59 @@ foreach ($history_trips as &$ht) {
 }
 unset($ht);
 
-// 6. Get Overtime History (aggregated per day using MIN and MAX)
-$default_att_start = date('Y-m-21', strtotime('-1 month', strtotime(date('Y-m-01'))));
-$default_att_end = date('Y-m-20');
+$today_day = intval(date('j'));
+if ($today_day > 20) {
+    $default_att_start = date('Y-m-21');
+    $default_att_end = date('Y-m-20', strtotime('+1 month'));
+} else {
+    $default_att_start = date('Y-m-21', strtotime('-1 month'));
+    $default_att_end = date('Y-m-20');
+}
 
 $att_start = $_GET['att_start'] ?? $default_att_start;
 $att_end = $_GET['att_end'] ?? $default_att_end;
+
+// Payroll Periods Generator (Framas Cut-off: 21st of previous month to 20th of current month)
+$months_lang = [
+    'id' => [
+        'full' => [1=>'Januari', 2=>'Februari', 3=>'Maret', 4=>'April', 5=>'Mei', 6=>'Juni', 7=>'Juli', 8=>'Agustus', 9=>'September', 10=>'Oktober', 11=>'November', 12=>'Desember'],
+        'short' => [1=>'Jan', 2=>'Feb', 3=>'Mar', 4=>'Apr', 5=>'Mei', 6=>'Jun', 7=>'Jul', 8=>'Agu', 9=>'Sep', 10=>'Okt', 11=>'Nov', 12=>'Des']
+    ],
+    'en' => [
+        'full' => [1=>'January', 2=>'February', 3=>'March', 4=>'April', 5=>'May', 6=>'June', 7=>'July', 8=>'August', 9=>'September', 10=>'October', 11=>'November', 12=>'December'],
+        'short' => [1=>'Jan', 2=>'Feb', 3=>'Mar', 4=>'Apr', 5=>'May', 6=>'Jun', 7=>'Jul', 8=>'Aug', 9=>'Sep', 10=>'Oct', 11=>'Nov', 12=>'Dec']
+    ]
+];
+$active_lang = $_SESSION['lang'] ?? 'id';
+$months_full = $months_lang[$active_lang]['full'] ?? $months_lang['id']['full'];
+$months_short = $months_lang[$active_lang]['short'] ?? $months_lang['id']['short'];
+
+$max_period_offset = ($today_day > 20) ? 1 : 0;
+$payroll_periods = [];
+$current_month_time = strtotime(date('Y-m-01'));
+for ($i = $max_period_offset; $i >= -12; $i--) {
+    $target_time = strtotime("$i month", $current_month_time);
+    $y = intval(date('Y', $target_time));
+    $m = intval(date('n', $target_time));
+
+    $prev_time = strtotime("-1 month", strtotime(sprintf('%04d-%02d-01', $y, $m)));
+    $prev_y = intval(date('Y', $prev_time));
+    $prev_m = intval(date('n', $prev_time));
+
+    $p_start = sprintf('%04d-%02d-21', $prev_y, $prev_m);
+    $p_end = sprintf('%04d-%02d-20', $y, $m);
+
+    $label = $months_full[$m] . ' ' . $y . ' (21 ' . $months_short[$prev_m] . ' - 20 ' . $months_short[$m] . ')';
+    $is_selected = ($p_start === $att_start && $p_end === $att_end);
+
+    $payroll_periods[] = [
+        'label' => $label,
+        'start_date' => $p_start,
+        'end_date' => $p_end,
+        'val' => $p_start . '|' . $p_end,
+        'selected' => $is_selected
+    ];
+}
 
 $stmt_ot = $pdo->prepare("SELECT 
                             shift_date, 
@@ -129,7 +224,7 @@ $stmt_ot = $pdo->prepare("SELECT
                           FROM shifts 
                           WHERE driver_id = ? AND shift_date BETWEEN ? AND ? 
                           GROUP BY shift_date 
-                          ORDER BY shift_date DESC");
+                          ORDER BY shift_date ASC");
 $stmt_ot->execute([$driver_id, $att_start, $att_end]);
 $attendance_records = $stmt_ot->fetchAll();
 
@@ -166,6 +261,8 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css?v=<?= time() ?>">
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
     <style>
         .searchable-select { position: relative; width: 100%; }
         .search-results {
@@ -175,7 +272,7 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
             z-index: 100; display: none; box-shadow: var(--glass-shadow);
         }
         .search-option { padding: 12px; cursor: pointer; border-bottom: 1px solid var(--glass-border); font-size: 0.9rem; }
-        .search-option:hover { background: rgba(0,0,0,0.05); }
+        .search-option:hover, .search-option.highlighted { background: rgba(37, 99, 235, 0.1); color: var(--accent-color); }
 
         /* Smooth collapsible forms */
         .collapsible-form {
@@ -236,15 +333,7 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
             <span id="server-clock" style="font-size: 0.7rem; color: var(--text-primary); font-weight: 700; background: var(--card-bg); padding: 4px 8px; border-radius: 8px; font-family: monospace; letter-spacing: 0.02em; border: 1px solid var(--glass-border); box-shadow: 0 2px 4px rgba(0,0,0,0.02); display: inline-flex; flex-direction: column; align-items: center; gap: 1px; white-space: nowrap; flex-shrink: 0;" data-timestamp="<?= time() ?>"><div><?= date('d M Y') ?></div><div style="font-size: 0.8rem; color: var(--accent-color);"><?= date('H:i:s') ?></div></span>
         </div>
 
-        <?php if ($pending_passenger_trips_count > 0): ?>
-            <div class="alert alert-warning" style="background: #fffbeb; color: #b45309; border: 1px solid #fde68a; padding: 8px 10px; border-radius: 12px; margin-bottom: 12px; font-size: 0.85rem; font-weight: 500; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                <span style="flex: 1;">⚠️ <?= $_SESSION['lang'] === 'id' ? "Ada {$pending_passenger_trips_count} perjalanan menunggu persetujuan penumpang." : "There are {$pending_passenger_trips_count} trips waiting for passenger approval." ?></span>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <button onclick="showTab('history')" style="background: #d97706; border: none; color: white; padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; cursor: pointer; white-space: nowrap;"><?= $_SESSION['lang'] === 'id' ? 'Cek Riwayat' : 'Check History' ?></button>
-                    <button onclick="this.closest('.alert').style.display='none'" style="background:none; border:none; color:#b45309; font-size:1.3rem; cursor:pointer; font-weight:bold; padding:0; line-height:1; margin-left:4px;">&times;</button>
-                </div>
-            </div>
-        <?php endif; ?>
+
 
         <?php if (isset($_SESSION['flash_success'])): ?>
             <?php if (in_array($_SESSION['flash_success'], ["Perjalanan berhasil dimulai.", "Trip started successfully."])): ?>
@@ -335,67 +424,35 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                             <input type="hidden" name="action" value="start_trip">
                             <h4 style="margin-bottom: 20px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;"><span>👤</span> <?= __('start_trip') ?></h4>
                             
-                            <!-- Searchable Destination -->
-                            <div class="form-group searchable-select">
-                                <label><?= __('destination') ?></label>
-                                <input type="text" id="dest_search" placeholder="Cari atau Tambah Tujuan..." autocomplete="off">
-                                <input type="hidden" name="destination_id" id="dest_id_hidden">
-                                <input type="text" name="new_destination" id="new_dest_input" placeholder="Nama Tujuan Baru" style="display:none; margin-top: 10px;">
-                                <div id="dest_results" class="search-results"></div>
-                            </div>
-
-                            <!-- Searchable Passenger -->
-                            <div class="form-group searchable-select">
-                                <label><?= __('passenger') ?></label>
-                                <input type="text" id="pass_search" placeholder="Cari User..." autocomplete="off">
-                                <input type="hidden" name="passenger_id" id="pass_id_hidden">
-                                <div id="pass_results" class="search-results"></div>
-                            </div>
-
+                            <!-- 1. Nomor Mobil & Odometer Awal -->
                             <div class="form-grid-2">
-                                <div class="form-group">
+                                <div class="form-group searchable-select">
                                     <label><?= __('car_no') ?></label>
-                                    <select name="car_id" id="car_id_select" required>
-                                        <?php foreach ($cars as $c): ?>
-                                            <option value="<?= $c['id'] ?>" data-last-km="<?= $car_last_km[$c['id']] ?>" <?= ($driver_data['preferred_car_id'] == $c['id']) ? 'selected' : '' ?>><?= htmlspecialchars($c['car_no']) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
+                                    <input type="text" name="car_no" id="car_search" placeholder="Ketik atau pilih Nomor Mobil..." autocomplete="off" required value="<?= htmlspecialchars($pref_car_no) ?>" data-last-km="<?= $pref_car_km ?>">
+                                    <input type="hidden" name="car_id" id="car_id_hidden" value="<?= htmlspecialchars($driver_data['preferred_car_id'] ?? '') ?>">
+                                    <div id="car_results" class="search-results"></div>
                                 </div>
                                 <div class="form-group">
                                     <label><?= __('km_start') ?></label>
                                     <input type="number" name="km_start" id="km_start_input" placeholder="0" required>
                                 </div>
                             </div>
-                            
-                            <script>
-                            document.addEventListener('DOMContentLoaded', function() {
-                                const carSelect = document.getElementById('car_id_select');
-                                const kmStartInput = document.getElementById('km_start_input');
-                                
-                                if (carSelect && kmStartInput) {
-                                    function updateKmStart() {
-                                        const selectedOption = carSelect.options[carSelect.selectedIndex];
-                                        const lastKm = selectedOption.getAttribute('data-last-km');
-                                        if (lastKm && !kmStartInput.getAttribute('data-user-modified')) {
-                                            kmStartInput.value = lastKm;
-                                        }
-                                    }
-                                    
-                                    // Let user override without auto-replacing back on blur
-                                    kmStartInput.addEventListener('input', () => {
-                                        kmStartInput.setAttribute('data-user-modified', 'true');
-                                    });
-                                    
-                                    carSelect.addEventListener('change', () => {
-                                        kmStartInput.removeAttribute('data-user-modified');
-                                        updateKmStart();
-                                    });
-                                    
-                                    // Init on load
-                                    updateKmStart();
-                                }
-                            });
-                            </script>
+
+                            <!-- 2. Penumpang -->
+                            <div class="form-group searchable-select">
+                                <label><?= __('passenger') ?></label>
+                                <input type="text" name="passenger_name" id="pass_search" placeholder="Cari User..." autocomplete="off">
+                                <input type="hidden" name="passenger_id" id="pass_id_hidden">
+                                <div id="pass_results" class="search-results"></div>
+                            </div>
+
+                            <!-- 3. Tujuan -->
+                            <div class="form-group searchable-select">
+                                <label><?= __('destination') ?></label>
+                                <input type="text" name="destination_name" id="dest_search" placeholder="Ketik atau Pilih Tujuan..." autocomplete="off">
+                                <input type="hidden" name="destination_id" id="dest_id_hidden">
+                                <div id="dest_results" class="search-results"></div>
+                            </div>
                             <?php if ($mandatory_photo === '1'): ?>
                             <div class="form-group">
                                 <label><?= __('photo_proof') ?> (KM Start)</label>
@@ -524,21 +581,54 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
         <div id="history" class="tab-content"><?php include 'history_tab.php'; ?></div>
         <div id="attendance" class="tab-content">
             <div style="background: var(--card-bg); padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); margin-bottom: 24px;">
-                <form action="index.php" method="GET" style="display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; align-items: flex-end;">
-                    <div class="form-group" style="margin: 0;">
-                        <label style="font-size: 0.7rem; color: var(--text-secondary);"><?= __('start_date') ?? 'Start' ?></label>
-                        <input type="date" name="att_start" value="<?= $att_start ?>" style="padding: 8px; font-size: 0.85rem; border-radius: 8px;">
+                <form action="index.php" method="GET" id="attendance_filter_form">
+                    <div style="margin-bottom: 12px;">
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            📅 <span><?= __('period') ?? 'Periode' ?></span>
+                        </label>
+                        <select id="att_period_select" onchange="onPeriodChange(this, 'att_start_input', 'att_end_input', 'submit_att')" style="width: 100%; padding: 8px 12px; font-size: 0.85rem; border-radius: 8px; background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--glass-border); font-weight: 600; cursor: pointer; outline: none;">
+                            <?php 
+                            $has_matched_att = false;
+                            foreach ($payroll_periods as $p): 
+                                if ($p['selected']) $has_matched_att = true;
+                            ?>
+                                <option value="<?= $p['val'] ?>" <?= $p['selected'] ? 'selected' : '' ?>>
+                                    <?= htmlspecialchars($p['label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <option value="custom" <?= !$has_matched_att ? 'selected' : '' ?> disabled style="display: <?= !$has_matched_att ? 'block' : 'none' ?>;">-- <?= __('custom_period') ?? 'Kustom Tanggal' ?> --</option>
+                        </select>
                     </div>
-                    <div class="form-group" style="margin: 0;">
-                        <label style="font-size: 0.7rem; color: var(--text-secondary);"><?= __('end_date') ?? 'End' ?></label>
-                        <input type="date" name="att_end" value="<?= $att_end ?>" style="padding: 8px; font-size: 0.85rem; border-radius: 8px;">
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; align-items: flex-end;">
+                        <div class="form-group" style="margin: 0;">
+                            <label style="font-size: 0.7rem; color: var(--text-secondary);"><?= __('start_date') ?? 'Start' ?></label>
+                            <input type="date" id="att_start_input" name="att_start" value="<?= $att_start ?>" onchange="checkCustomPeriod('att_period_select', this.value, document.getElementById('att_end_input').value)" style="padding: 8px; font-size: 0.85rem; border-radius: 8px; background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--glass-border); width: 100%;">
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label style="font-size: 0.7rem; color: var(--text-secondary);"><?= __('end_date') ?? 'End' ?></label>
+                            <input type="date" id="att_end_input" name="att_end" value="<?= $att_end ?>" onchange="checkCustomPeriod('att_period_select', document.getElementById('att_start_input').value, this.value)" style="padding: 8px; font-size: 0.85rem; border-radius: 8px; background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--glass-border); width: 100%;">
+                        </div>
+                        <button type="submit" class="btn" title="Cari / Filter" style="padding: 10px 12px; border-radius: 8px; margin-bottom: 0;">🔍</button>
+                        <a href="index.php" class="btn" title="Reset" style="padding: 10px 12px; border-radius: 8px; margin-bottom: 0; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid #ef4444; display: flex; align-items: center; justify-content: center; text-decoration: none;">❌</a>
                     </div>
-                    <button type="submit" class="btn" style="padding: 10px 12px; border-radius: 8px; margin-bottom: 0;">🔍</button>
-                    <a href="index.php" class="btn" style="padding: 10px 12px; border-radius: 8px; margin-bottom: 0; background: rgba(239,68,68,0.1); color: #ef4444; border: 1px solid #ef4444; display: flex; align-items: center; justify-content: center; text-decoration: none;">❌</a>
                 </form>
             </div>
 
-            <h3 style="text-align: left; margin-bottom: 15px; font-size: 1.1rem;"><?= __('attendance_report') ?></h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                <h3 style="margin: 0; font-size: 1.1rem;"><?= __('attendance_report') ?></h3>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    <button type="button" id="compareToggleBtn" onclick="toggleHrisCompare()" style="background: rgba(17, 141, 255, 0.1); color: var(--pbi-blue); border: 1px solid var(--pbi-blue); border-radius: 8px; padding: 5px 10px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
+                        🔍 Compare HRIS
+                    </button>
+                    <button type="button" onclick="recalculateDriverOt()" style="background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid #10b981; border-radius: 8px; padding: 5px 10px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
+                        🔄 <?= $_SESSION['lang'] === 'id' ? 'Hitung Ulang' : 'Recalculate' ?>
+                    </button>
+                    <button type="button" onclick="exportDriverOtPdf()" style="background: #e11d48; color: #ffffff; border: none; border-radius: 8px; padding: 5px 10px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px; box-shadow: 0 2px 6px rgba(225,29,72,0.3);">
+                        📄 Export PDF
+                    </button>
+                </div>
+            </div>
 
             <?php if (count($attendance_records) === 0): ?>
                 <div style="text-align: center; color: var(--text-secondary); padding: 40px; background: var(--card-bg); border-radius: 12px; border: 1px dashed var(--glass-border);">
@@ -554,18 +644,26 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                                 <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Awal</th>
                                 <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Akhir</th>
                                 <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Tipe</th>
-                                <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Real</th>
-                                <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Conv</th>
-                                <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Sts</th>
+                                <th style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">OT</th>
+                                <th class="col-conv-ot" style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Conv</th>
+                                <th class="col-hris-compare" style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: #107c10; display: none;">HRIS</th>
+                                <th class="col-hris-compare" style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: #ea580c; display: none;">Break</th>
+                                <th class="col-status-ot" style="padding: 6px 4px; border-bottom: 2px solid var(--glass-border); text-align: center; color: var(--text-secondary);">Sts</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php 
                             $total_real_ot = 0;
                             $total_conv_ot = 0;
+                            $total_ot_days = 0;
                             foreach ($attendance_records as $ar): 
-                                $total_real_ot += (float)($ar['real_ot'] ?? 0);
-                                $total_conv_ot += (float)($ar['conv_ot'] ?? 0);
+                                $real_val = (float)($ar['real_ot'] ?? 0);
+                                $conv_val = (float)($ar['conv_ot'] ?? 0);
+                                $total_real_ot += $real_val;
+                                $total_conv_ot += $conv_val;
+                                if ($real_val > 0 || (float)($ar['overtime_early'] ?? 0) > 0 || (float)($ar['overtime_late'] ?? 0) > 0) {
+                                    $total_ot_days++;
+                                }
                                 $duration = '-';
                                 if ($ar['end_time']) {
                                     if ($ar['end_time'] === '00:00:00') {
@@ -578,7 +676,7 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                                     }
                                 }
                                 $is_holiday = (($ar['ot_type'] ?? 'R') === 'H');
-                                $has_ot = (float)($ar['real_ot'] ?? 0) > 0;
+                                $has_ot = $real_val > 0;
                                 
                                 $row_style = '';
                                 if ($is_holiday) {
@@ -606,10 +704,10 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                                         <strong><?= $ar['end_time'] ? ($ar['end_time'] === '00:00:00' ? '00:00' : substr($ar['end_time'], 0, 5)) : '-' ?></strong>
                                     </td>
                                     <td style="padding: 6px 4px; text-align: center; color: <?= $ar['overtime_early'] > 0 ? 'var(--pbi-blue)' : 'var(--text-secondary)' ?>;">
-                                        <?= formatDecimalHoursPHP($ar['overtime_early']) ?>
+                                        <?= (float)($ar['overtime_early'] ?? 0) > 0 ? formatDecimalHoursPHP($ar['overtime_early']) : '-' ?>
                                     </td>
                                     <td style="padding: 6px 4px; text-align: center; color: <?= $ar['overtime_late'] > 0 ? 'var(--pbi-blue)' : 'var(--text-secondary)' ?>;">
-                                        <?= formatDecimalHoursPHP($ar['overtime_late']) ?>
+                                        <?= (float)($ar['overtime_late'] ?? 0) > 0 ? formatDecimalHoursPHP($ar['overtime_late']) : '-' ?>
                                     </td>
                                     <td style="padding: 6px 4px; text-align: center; font-weight: bold; color: <?= ($ar['ot_type'] ?? 'R') === 'H' ? '#dc2626' : '#475569' ?>;">
                                         <?= $ar['ot_type'] ?? '-' ?>
@@ -617,10 +715,12 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                                     <td style="padding: 6px 4px; text-align: center; font-weight: <?= ($ar['real_ot'] ?? 0) > 0 ? 'bold' : 'normal' ?>; color: <?= ($ar['real_ot'] ?? 0) > 0 ? 'var(--pbi-blue)' : 'var(--text-secondary)' ?>;">
                                         <?= ($ar['real_ot'] ?? 0) > 0 ? (float)$ar['real_ot'] : '-' ?>
                                     </td>
-                                    <td style="padding: 6px 4px; text-align: center; font-weight: <?= ($ar['conv_ot'] ?? 0) > 0 ? 'bold' : 'normal' ?>; color: <?= ($ar['conv_ot'] ?? 0) > 0 ? '#107c10' : 'var(--text-secondary)' ?>;">
+                                    <td class="col-conv-ot" style="padding: 6px 4px; text-align: center; font-weight: <?= ($ar['conv_ot'] ?? 0) > 0 ? 'bold' : 'normal' ?>; color: <?= ($ar['conv_ot'] ?? 0) > 0 ? '#107c10' : 'var(--text-secondary)' ?>;">
                                         <?= ($ar['conv_ot'] ?? 0) > 0 ? (float)$ar['conv_ot'] : '-' ?>
                                     </td>
-                                    <td style="padding: 6px 4px; text-align: center; font-size: 0.65rem;">
+                                    <td class="col-hris-compare hris-compare-cell" data-date="<?= $ar['shift_date'] ?>" data-web-ot="<?= (float)($ar['real_ot'] ?? 0) ?>" style="padding: 6px 4px; text-align: center; font-size: 0.72rem; font-weight: bold; color: var(--text-secondary); display: none;">-</td>
+                                    <td class="col-hris-compare hris-break-cell" data-date="<?= $ar['shift_date'] ?>" style="padding: 6px 4px; text-align: center; font-size: 0.72rem; font-weight: bold; color: #ea580c; display: none;">-</td>
+                                    <td class="col-status-ot" style="padding: 6px 4px; text-align: center; font-size: 0.65rem;">
                                         <?php if ($ar['approval_status'] == 'approved'): ?>
                                             <span style="color: #166534; font-weight: 600;">✔</span>
                                         <?php else: ?>
@@ -631,25 +731,100 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                             <?php endforeach; ?>
                         </tbody>
                         <tfoot style="border-top: 2px solid var(--glass-border); background: rgba(0,0,0,0.02); font-weight: bold;">
+                            <tr style="border-bottom: 1px dashed var(--glass-border);">
+                                <td colspan="5" style="padding: 6px 4px; text-align: right; color: var(--text-secondary); font-size: 0.7rem;">HARI LEMBUR:</td>
+                                <td style="padding: 6px 4px; text-align: center; color: #107c10; font-weight: bold;"><?= $total_ot_days ?> Hari</td>
+                                <td class="col-conv-ot" style="padding: 6px 4px;"></td>
+                                <td class="col-hris-compare" id="hrisTotalDaysCell" style="padding: 6px 4px; text-align: center; color: #107c10; font-weight: bold; display: none;">-</td>
+                                <td class="col-hris-compare" style="padding: 6px 4px; display: none;"></td>
+                                <td class="col-status-ot" style="padding: 6px 4px;"></td>
+                            </tr>
                             <tr>
-                                <td colspan="5" style="padding: 8px 4px; text-align: right; color: var(--text-primary);">TOTAL:</td>
-                                <td style="padding: 8px 4px; text-align: center; color: var(--text-primary);"><?= $total_real_ot > 0 ? $total_real_ot : '-' ?></td>
-                                <td style="padding: 8px 4px; text-align: center; color: #107c10;"><?= $total_conv_ot > 0 ? $total_conv_ot : '-' ?></td>
-                                <td style="padding: 8px 4px;"></td>
+                                <td colspan="5" style="padding: 8px 4px; text-align: right; color: var(--text-primary);">TOTAL JAM:</td>
+                                <td style="padding: 8px 4px; text-align: center; color: var(--pbi-blue); font-weight: bold;"><?= $total_real_ot > 0 ? $total_real_ot : '-' ?></td>
+                                <td class="col-conv-ot" style="padding: 8px 4px; text-align: center; color: #107c10; font-weight: bold;"><?= $total_conv_ot > 0 ? $total_conv_ot : '-' ?></td>
+                                <td class="col-hris-compare" id="hrisTotalOtCell" style="padding: 8px 4px; text-align: center; color: #107c10; font-weight: bold; display: none;">-</td>
+                                <td class="col-hris-compare" id="hrisTotalBreakCell" style="padding: 8px 4px; text-align: center; color: #ea580c; font-weight: bold; display: none;">-</td>
+                                <td class="col-status-ot" style="padding: 8px 4px;"></td>
                             </tr>
                         </tfoot>
                     </table>
                 </div>
-                
-                <div style="margin-top: 16px; background: rgba(16, 124, 16, 0.05); border: 1px dashed rgba(16, 124, 16, 0.3); border-radius: 12px; padding: 14px;">
-                    <h5 style="margin: 0 0 8px 0; color: #107c10; font-size: 0.85rem; display: flex; align-items: center; gap: 6px;">💡 Info Perhitungan Uang Lembur</h5>
-                    <p style="margin: 0; font-size: 0.75rem; color: var(--text-secondary); line-height: 1.5;">
-                        Sistem menghitung <strong>Conv OT (Jam Lembur Konversi)</strong> Anda sesuai pengali aturan pemerintah.<br>
-                        Untuk mengetahui estimasi Uang Lembur (Rupiah), Anda dapat menggunakan rumus baku ini:<br>
-                        <span style="display: block; margin-top: 6px; padding: 6px 10px; background: rgba(255,255,255,0.7); border-radius: 6px; color: var(--text-primary); font-weight: 600;">Uang Lembur = Total Conv OT × (1 / 173 × Gaji Pokok)</span>
-                    </p>
+                <div style="margin-top: 14px; background: var(--card-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 14px;">
+                    <div style="font-weight: 700; font-size: 0.85rem; color: var(--text-primary); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                        ℹ️ <span>Rumus & Penjelasan Lembur (Payroll & HRIS)</span>
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-secondary); line-height: 1.6;">
+                        <div style="margin-bottom: 10px; padding: 10px; background: rgba(234, 88, 12, 0.08); border-left: 4px solid #ea580c; border-radius: 6px; color: var(--text-primary);">
+                            <strong style="color: #c2410c; font-size: 0.8rem;">💡 Penjelasan Komparasi HRIS & Potongan Break Time:</strong><br>
+                            Jam lembur di HRIS Payroll adalah <strong>Jam Netto (setelah dipotong waktu istirahat / Break Time)</strong>.<br>
+                            Data dianggap <strong>Sesuai (OK)</strong> jika: <code>Jam HRIS + Jam Break = Jam Web OT</code>.<br>
+                            <span style="color: #b91c1c; font-weight: 600;">⚠️ Tanda Merah hanya muncul apabila total (Jam HRIS + Break) masih lebih kecil dari Jam Web OT.</span>
+                        </div>
+                        <div style="margin-bottom: 10px; padding: 10px; background: rgba(16, 124, 16, 0.08); border-left: 4px solid #107c10; border-radius: 6px; color: var(--text-primary);">
+                            <strong style="color: #107c10; font-size: 0.8rem;">💰 Rumus Nominal Uang Lembur:</strong><br>
+                            <strong>Total Uang Lembur = Total Conv OT × (Gaji Pokok ÷ 173)</strong>
+                        </div>
+                        <div style="margin-bottom: 8px; padding: 8px; background: rgba(17,141,255,0.05); border-left: 3px solid var(--pbi-blue); border-radius: 6px;">
+                            <strong style="color: var(--pbi-blue);">1. Hari Kerja Biasa (Tipe R):</strong><br>
+                            • <strong>Jam ke-1:</strong> Real OT × 1.5<br>
+                            • <strong>Jam ke-2 & seterusnya:</strong> 1.5 + ((Real OT - 1) × 2.0)
+                        </div>
+                        <div style="padding: 8px; background: rgba(220,38,38,0.05); border-left: 3px solid #dc2626; border-radius: 6px;">
+                            <strong style="color: #dc2626;">2. Hari Libur / Akhir Pekan (Tipe H):</strong><br>
+                            • <strong>Jam ke-1 s/d 7:</strong> Real OT × 2.0<br>
+                            • <strong>Jam ke-8:</strong> 14.0 + ((Real OT - 7) × 3.0)<br>
+                            • <strong>Jam ke-9 & seterusnya:</strong> 17.0 + ((Real OT - 8) × 4.0)
+                        </div>
+                    </div>
                 </div>
             <?php endif; ?>
+        </div>
+        <div id="hris" class="tab-content">
+            <div style="background: var(--card-bg); padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                    <div style="font-weight: 700; font-size: 1rem; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                        🏢 <span>Data Aktual HRIS (Payroll)</span>
+                    </div>
+                    <span style="font-size: 0.75rem; color: #107c10; font-weight: 600; background: rgba(16,124,16,0.1); padding: 3px 8px; border-radius: 4px;">NIK: <?= htmlspecialchars($driver_data['nik'] ?? '-') ?></span>
+                </div>
+                
+                <div style="margin-bottom: 12px;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                        📅 <span><?= __('period') ?? 'Periode' ?></span>
+                    </label>
+                    <select id="hris_period_select" onchange="onPeriodChange(this, 'hris_start_date', 'hris_end_date', 'load_hris')" style="width: 100%; padding: 8px 12px; font-size: 0.85rem; border-radius: 8px; background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--glass-border); font-weight: 600; cursor: pointer; outline: none;">
+                        <?php 
+                        $has_matched_hris = false;
+                        foreach ($payroll_periods as $p): 
+                            if ($p['selected']) $has_matched_hris = true;
+                        ?>
+                            <option value="<?= $p['val'] ?>" <?= $p['selected'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($p['label']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                        <option value="custom" <?= !$has_matched_hris ? 'selected' : '' ?> disabled style="display: <?= !$has_matched_hris ? 'block' : 'none' ?>;">-- <?= __('custom_period') ?? 'Kustom Tanggal' ?> --</option>
+                    </select>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: flex-end;">
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.7rem; color: var(--text-secondary);">Start Date</label>
+                        <input type="date" id="hris_start_date" value="<?= $att_start ?>" onchange="checkCustomPeriod('hris_period_select', this.value, document.getElementById('hris_end_date').value)" style="padding: 8px; font-size: 0.85rem; border-radius: 8px; background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--glass-border); width: 100%;">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.7rem; color: var(--text-secondary);">End Date</label>
+                        <input type="date" id="hris_end_date" value="<?= $att_end ?>" onchange="checkCustomPeriod('hris_period_select', document.getElementById('hris_start_date').value, this.value)" style="padding: 8px; font-size: 0.85rem; border-radius: 8px; background: var(--bg-color); color: var(--text-primary); border: 1px solid var(--glass-border); width: 100%;">
+                    </div>
+                    <button type="button" onclick="loadHrisData(true)" class="btn" style="padding: 10px 14px; border-radius: 8px; margin: 0; background: var(--pbi-blue); font-weight: 600;">🔍 Load</button>
+                </div>
+            </div>
+
+            <div id="hrisContentBox">
+                <div style="text-align: center; color: var(--text-secondary); padding: 40px; background: var(--card-bg); border-radius: 12px; border: 1px dashed var(--glass-border);">
+                    <p>Klik tombol 🔍 <strong>Load</strong> untuk memuat data aktual dari HRIS.</p>
+                </div>
+            </div>
         </div>
         <div id="settings" class="tab-content"><?php include 'settings_tab.php'; ?></div>
         <div style="height: 90px;"></div>
@@ -660,6 +835,7 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
         <div class="nav-item active" onclick="showTab('shift', this)"><span class="nav-icon">🚗</span><span><?= __('home') ?></span></div>
         <div class="nav-item" onclick="showTab('history', this)"><span class="nav-icon">🕒</span><span><?= __('history') ?></span></div>
         <div class="nav-item" onclick="showTab('attendance', this)"><span class="nav-icon">⏰</span><span><?= __('attendance') ?></span></div>
+        <div class="nav-item" onclick="showTab('hris', this); loadHrisData();"><span class="nav-icon">🏢</span><span>HRIS</span></div>
         <div class="nav-item" onclick="showTab('settings', this)"><span class="nav-icon">⚙️</span><span><?= __('settings') ?></span></div>
     </div>
 
@@ -674,13 +850,134 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
         });
     };
 
-    const destinations = <?= json_encode($destinations) ?>;
-    const passengers = <?= json_encode($passengers) ?>;
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        return String(text)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+    window.escapeHtml = escapeHtml;
+
+    let destinations = <?= json_encode($destinations) ?>;
+    let passengers = <?= json_encode($passengers) ?>;
+
+    async function deleteDestOption(id, name, inputId, hiddenId, resultsId) {
+        const isIndo = "<?= $_SESSION['lang'] ?? 'id' ?>" === 'id';
+        const confirmRes = await Swal.fire({
+            title: isIndo ? 'Hapus Destinasi?' : 'Delete Destination?',
+            html: isIndo 
+                ? `Apakah Anda yakin ingin menghapus <strong>"${escapeHtml(name)}"</strong> dari daftar saran riwayat tujuan?` 
+                : `Are you sure you want to remove <strong>"${escapeHtml(name)}"</strong> from destination suggestions?`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#ef4444',
+            cancelButtonColor: '#6b7280',
+            confirmButtonText: isIndo ? 'Ya, Hapus' : 'Yes, Delete',
+            cancelButtonText: isIndo ? 'Batal' : 'Cancel'
+        });
+
+        if (!confirmRes.isConfirmed) return;
+
+        try {
+            const fd = new FormData();
+            fd.append('action', 'delete_destination');
+            fd.append('destination_id', id);
+            fd.append('ajax', '1');
+
+            const res = await fetch('manage_trip.php', {
+                method: 'POST',
+                body: fd
+            });
+            const json = await res.json();
+
+            if (json.success) {
+                // Remove from in-memory destinations array
+                if (typeof destinations !== 'undefined') {
+                    const idx = destinations.findIndex(d => d.id == id);
+                    if (idx !== -1) {
+                        destinations.splice(idx, 1);
+                    }
+                }
+
+                // If input currently has this destination typed, clear it
+                const input = document.getElementById(inputId);
+                const hidden = document.getElementById(hiddenId);
+                if (input && input.value.trim().toLowerCase() === name.trim().toLowerCase()) {
+                    input.value = '';
+                    if (hidden) hidden.value = '';
+                }
+
+                // Re-trigger input to refresh the dropdown immediately
+                if (input) {
+                    input.dispatchEvent(new Event('input'));
+                }
+
+                Swal.fire({
+                    icon: 'success',
+                    title: isIndo ? 'Berhasil Dihapus' : 'Deleted Successfully',
+                    text: json.message || (isIndo ? 'Tujuan berhasil dihapus dari daftar saran.' : 'Destination removed.'),
+                    timer: 1600,
+                    showConfirmButton: false
+                });
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: isIndo ? 'Gagal Menghapus' : 'Cannot Delete',
+                    text: json.error || (isIndo ? 'Destinasi tidak dapat dihapus.' : 'Failed to delete destination.')
+                });
+            }
+        } catch (err) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Error',
+                text: err.message
+            });
+        }
+    }
+
+    function focusNextField(currentInputId) {
+        if (currentInputId === 'car_search') {
+            const next = document.getElementById('km_start_input');
+            if (next) next.focus();
+        } else if (currentInputId === 'km_start_input') {
+            const next = document.getElementById('pass_search');
+            if (next) next.focus();
+        } else if (currentInputId === 'pass_search') {
+            const next = document.getElementById('dest_search');
+            if (next) next.focus();
+        } else if (currentInputId === 'dest_search') {
+            const photo = document.querySelector('input[name="km_start_photo"]');
+            if (photo) {
+                photo.focus();
+            } else {
+                const btn = document.querySelector('form button[type="submit"]');
+                if (btn) btn.focus();
+            }
+        } else if (currentInputId === 'modal_dest_search') {
+            const next = document.getElementById('modal_pass_search');
+            if (next) next.focus();
+        } else if (currentInputId === 'modal_pass_search') {
+            const next = document.querySelector('#editTripModal input[name="car_no"]');
+            if (next) next.focus();
+        } else if (currentInputId.startsWith('edit_dest_search_')) {
+            const tripId = currentInputId.replace('edit_dest_search_', '');
+            const next = document.getElementById(`edit_pass_search_${tripId}`);
+            if (next) next.focus();
+        } else if (currentInputId.startsWith('edit_pass_search_')) {
+            const tripId = currentInputId.replace('edit_pass_search_', '');
+            const next = document.querySelector(`#history_edit_trip_form_${tripId} input[name="car_no"]`);
+            if (next) next.focus();
+        }
+    }
 
     function initSearchable(inputId, hiddenId, resultsId, data, isDest = false) {
         const input = document.getElementById(inputId);
         const hidden = document.getElementById(hiddenId);
         const results = document.getElementById(resultsId);
+        let activeIndex = -1;
 
         if(!input) return;
 
@@ -689,48 +986,107 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
             hidden.value = ''; // Reset ID if user types custom text
             filter(e.target.value);
         });
+
+        input.addEventListener('keydown', (e) => {
+            const options = results.querySelectorAll('.search-option');
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (results.style.display === 'none') {
+                    filter(input.value);
+                    return;
+                }
+                if (options.length > 0) {
+                    activeIndex = (activeIndex + 1) % options.length;
+                    updateHighlight(options);
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (options.length > 0) {
+                    activeIndex = (activeIndex - 1 + options.length) % options.length;
+                    updateHighlight(options);
+                }
+            } else if (e.key === 'Enter') {
+                e.preventDefault(); // Mencegah submit langsung saat Enter
+                if (results.style.display !== 'none' && activeIndex >= 0 && options[activeIndex]) {
+                    options[activeIndex].click();
+                } else {
+                    results.style.display = 'none';
+                    focusNextField(inputId);
+                }
+            }
+        });
+
+        function updateHighlight(options) {
+            options.forEach((opt, idx) => {
+                if (idx === activeIndex) {
+                    opt.classList.add('highlighted');
+                    opt.scrollIntoView({ block: 'nearest' });
+                } else {
+                    opt.classList.remove('highlighted');
+                }
+            });
+        }
         
         function filter(query) {
-            let filtered = data.filter(item => item.name.toLowerCase().includes(query.toLowerCase()));
-            let html = filtered.map(item => `<div class="search-option" onclick="selectItem('${inputId}', '${hiddenId}', '${resultsId}', '${item.id}', '${item.name}', ${isDest})">${item.name}</div>`).join('');
-            
-            if (isDest) {
-                html += `<div class="search-option" style="color: var(--accent-color); font-weight: bold;" onclick="selectItem('${inputId}', '${hiddenId}', '${resultsId}', 'NEW', '+ Tambah Baru', true)">+ <?= __('add_new_destination') ?></div>`;
+            activeIndex = -1;
+            const q = (query || '').toLowerCase().trim();
+            let filtered = data.filter(item => (item.name || '').toLowerCase().includes(q));
+            if (filtered.length === 0) {
+                results.style.display = 'none';
+                results.innerHTML = '';
+                return;
             }
+
+            const isIndo = "<?= $_SESSION['lang'] ?? 'id' ?>" === 'id';
+            let html = filtered.map((item, idx) => {
+                const isDeletable = isDest && item.name !== '?';
+                return `
+                    <div class="search-option" data-idx="${idx}" style="${isDeletable ? 'display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;' : 'padding: 10px 14px;'}">
+                        <span style="flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">${escapeHtml(item.name)}</span>
+                        ${isDeletable ? `
+                        <button type="button" class="btn-dest-del" data-idx="${idx}" title="${isIndo ? 'Hapus dari riwayat tujuan' : 'Remove from suggestions'}" style="background: rgba(239, 68, 68, 0.08); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px; padding: 4px 8px; font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1; transition: all 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.2)'" onmouseout="this.style.background='rgba(239, 68, 68, 0.08)'">
+                            🗑️
+                        </button>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
 
             results.innerHTML = html;
             results.style.display = 'block';
+
+            // Bind click handlers directly to DOM elements avoiding any string escaping issues
+            results.querySelectorAll('.search-option').forEach(optEl => {
+                const idx = parseInt(optEl.getAttribute('data-idx'), 10);
+                const item = filtered[idx];
+                if (!item) return;
+
+                optEl.addEventListener('click', (e) => {
+                    if (e.target.closest('.btn-dest-del')) return;
+                    selectItem(inputId, hiddenId, resultsId, item.id, item.name);
+                });
+
+                const delBtn = optEl.querySelector('.btn-dest-del');
+                if (delBtn) {
+                    delBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        deleteDestOption(item.id, item.name, inputId, hiddenId, resultsId);
+                    });
+                }
+            });
         }
     }
 
-    function selectItem(inputId, hiddenId, resultsId, id, name, isDest) {
+    function selectItem(inputId, hiddenId, resultsId, id, name) {
         const input = document.getElementById(inputId);
         const hidden = document.getElementById(hiddenId);
         const results = document.getElementById(resultsId);
-        
-        let newDestInput = null;
-        if (inputId.startsWith('edit_dest_search_')) {
-            const tripId = inputId.replace('edit_dest_search_', '');
-            newDestInput = document.getElementById(`edit_new_dest_input_${tripId}`);
-        } else if (inputId === 'edit_dest_search') {
-            newDestInput = document.getElementById('edit_new_dest_input');
-        } else {
-            newDestInput = document.getElementById('new_dest_input');
-        }
 
-        input.value = (id === 'NEW') ? '+ Tambah Baru' : name;
-        hidden.value = id;
-        results.style.display = 'none';
+        if (input) input.value = name;
+        if (hidden) hidden.value = id;
+        if (results) results.style.display = 'none';
 
-        if (isDest && newDestInput) {
-            newDestInput.style.display = (id === 'NEW') ? 'block' : 'none';
-            if (id === 'NEW') {
-                newDestInput.required = true;
-                newDestInput.focus();
-            } else {
-                newDestInput.required = false;
-            }
-        }
+        focusNextField(inputId);
     }
 
     document.addEventListener('click', (e) => {
@@ -742,13 +1098,153 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
     initSearchable('dest_search', 'dest_id_hidden', 'dest_results', destinations, true);
     initSearchable('pass_search', 'pass_id_hidden', 'pass_results', passengers, false);
 
+    const carsData = <?= json_encode(array_map(function($c) use ($car_last_km) {
+        return [
+            'id' => $c['id'],
+            'car_no' => $c['car_no'],
+            'last_km' => $car_last_km[$c['id']] ?? ''
+        ];
+    }, $cars)) ?>;
+
+    function initSearchableCar(inputId, hiddenId, resultsId, kmInputId) {
+        const input = document.getElementById(inputId);
+        const hidden = document.getElementById(hiddenId);
+        const results = document.getElementById(resultsId);
+        const kmInput = document.getElementById(kmInputId);
+        let activeIndex = -1;
+
+        if (!input) return;
+
+        input.addEventListener('focus', () => filterCar(input.value));
+        input.addEventListener('input', (e) => {
+            if (hidden) hidden.value = '';
+            filterCar(e.target.value);
+            updateKmForTypedCar(e.target.value);
+        });
+
+        input.addEventListener('keydown', (e) => {
+            const options = results.querySelectorAll('.search-option');
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                if (results.style.display === 'none') {
+                    filterCar(input.value);
+                    return;
+                }
+                if (options.length > 0) {
+                    activeIndex = (activeIndex + 1) % options.length;
+                    updateHighlight(options);
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (options.length > 0) {
+                    activeIndex = (activeIndex - 1 + options.length) % options.length;
+                    updateHighlight(options);
+                }
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (results.style.display !== 'none' && activeIndex >= 0 && options[activeIndex]) {
+                    options[activeIndex].click();
+                } else {
+                    results.style.display = 'none';
+                    if (kmInput) kmInput.focus();
+                }
+            }
+        });
+
+        function updateHighlight(options) {
+            options.forEach((opt, idx) => {
+                if (idx === activeIndex) {
+                    opt.classList.add('highlighted');
+                    opt.scrollIntoView({ block: 'nearest' });
+                } else {
+                    opt.classList.remove('highlighted');
+                }
+            });
+        }
+
+        function updateKmForTypedCar(val) {
+            if (!kmInput || kmInput.getAttribute('data-user-modified')) return;
+            const matched = carsData.find(c => c.car_no.trim().toLowerCase() === val.trim().toLowerCase());
+            if (matched && matched.last_km !== '') {
+                kmInput.value = matched.last_km;
+            }
+        }
+
+        function filterCar(query) {
+            activeIndex = -1;
+            const q = (query || '').toLowerCase().trim();
+            let filtered = carsData.filter(item => (item.car_no || '').toLowerCase().includes(q));
+            if (filtered.length === 0) {
+                results.style.display = 'none';
+                results.innerHTML = '';
+                return;
+            }
+            let html = filtered.map((item, idx) => `
+                <div class="search-option" data-idx="${idx}" style="padding: 10px 14px;">
+                    <span>🚗 <strong>${escapeHtml(item.car_no)}</strong></span>
+                    ${item.last_km ? `<small style="color: var(--text-secondary); float: right;">KM: ${escapeHtml(String(item.last_km))}</small>` : ''}
+                </div>
+            `).join('');
+
+            results.innerHTML = html;
+            results.style.display = 'block';
+
+            results.querySelectorAll('.search-option').forEach(optEl => {
+                const idx = parseInt(optEl.getAttribute('data-idx'), 10);
+                const item = filtered[idx];
+                if (!item) return;
+
+                optEl.addEventListener('click', () => {
+                    selectCarItem(inputId, hiddenId, resultsId, kmInputId, item.id, item.car_no, item.last_km);
+                });
+            });
+        }
+
+        if (kmInput) {
+            kmInput.addEventListener('input', () => {
+                kmInput.setAttribute('data-user-modified', 'true');
+            });
+            if (input.value && !kmInput.value) {
+                updateKmForTypedCar(input.value);
+            }
+        }
+    }
+
+    function selectCarItem(inputId, hiddenId, resultsId, kmInputId, id, carNo, lastKm) {
+        const input = document.getElementById(inputId);
+        const hidden = document.getElementById(hiddenId);
+        const results = document.getElementById(resultsId);
+        const kmInput = document.getElementById(kmInputId);
+
+        if (input) input.value = carNo;
+        if (hidden) hidden.value = id;
+        if (results) results.style.display = 'none';
+
+        if (kmInput && lastKm !== '' && !kmInput.getAttribute('data-user-modified')) {
+            kmInput.value = lastKm;
+        }
+        if (kmInput) kmInput.focus();
+    }
+
+    initSearchableCar('car_search', 'car_id_hidden', 'car_results', 'km_start_input');
+
+    const kmStartInputEl = document.getElementById('km_start_input');
+    if (kmStartInputEl) {
+        kmStartInputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                focusNextField('km_start_input');
+            }
+        });
+    }
+
     // Swipe gestures to switch tabs
     let touchstartX = 0;
     let touchstartY = 0;
     let touchendX = 0;
     let touchendY = 0;
     
-    const tabsOrder = ['shift', 'history', 'attendance', 'settings'];
+    const tabsOrder = ['shift', 'history', 'attendance', 'hris', 'settings'];
 
     function handleGesture() {
         const diffX = touchendX - touchstartX;
@@ -802,7 +1298,7 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
     }, { passive: true });
 
     function showTab(tabId, el) {
-        const tabsOrderList = ['shift', 'history', 'attendance', 'settings'];
+        const tabsOrderList = ['shift', 'history', 'attendance', 'hris', 'settings'];
         const currentActiveTab = document.querySelector('.tab-content.active');
         let direction = '';
         if (currentActiveTab) {
@@ -841,6 +1337,10 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                 }
             });
         }
+
+        if (tabId === 'hris' && typeof loadHrisData === 'function') {
+            loadHrisData(false);
+        }
     }
     
     // Auto restore active tab on DOMContentLoaded
@@ -848,6 +1348,9 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
         <?php if (isset($_SESSION['just_logged_in'])): ?>
             localStorage.removeItem('driverActiveTab');
             <?php unset($_SESSION['just_logged_in']); ?>
+        <?php endif; ?>
+        <?php if (isset($_GET['att_start']) || isset($_GET['att_end'])): ?>
+            localStorage.setItem('driverActiveTab', 'attendance');
         <?php endif; ?>
         const savedTab = localStorage.getItem('driverActiveTab') || 'shift';
         showTab(savedTab);
@@ -1090,43 +1593,10 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
     }
 
     function validateStartTrip(form) {
-        const destSearch = form.querySelector('#dest_search').value.trim();
-        const destId = form.querySelector('#dest_id_hidden').value;
-        const passSearch = form.querySelector('#pass_search').value.trim();
-        const passengerId = form.querySelector('#pass_id_hidden').value;
-
-        if (destSearch !== '' && !destId) {
-            alert("Silakan pilih Tujuan dari daftar saran yang muncul!");
-            form.querySelector('#dest_search').focus();
-            return false;
-        }
-        if (passSearch !== '' && !passengerId) {
-            alert("Silakan pilih Penumpang dari daftar saran yang muncul!");
-            form.querySelector('#pass_search').focus();
-            return false;
-        }
         return true;
     }
 
     function validateEditTrip(form) {
-        const destIdInput = form.querySelector('input[name="destination_id"]');
-        const passengerIdInput = form.querySelector('input[name="passenger_id"]');
-        const destSearchInput = form.querySelector('.dest-search-input');
-        const passSearchInput = form.querySelector('.pass-search-input');
-
-        const destId = destIdInput ? destIdInput.value : '';
-        const passengerId = passengerIdInput ? passengerIdInput.value : '';
-
-        if (!destId) {
-            alert("Silakan pilih Tujuan dari daftar saran yang muncul!");
-            if (destSearchInput) destSearchInput.focus();
-            return false;
-        }
-        if (!passengerId) {
-            alert("Silakan pilih Penumpang dari daftar saran yang muncul!");
-            if (passSearchInput) passSearchInput.focus();
-            return false;
-        }
         return true;
     }
 
@@ -1462,6 +1932,23 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                 return;
             }
 
+            // Detect WAF / Bot verification challenge or HTML interception
+            if (rawText.includes('One moment, please') || rawText.includes('wsidchk') || rawText.includes('failedChecks') || rawText.includes('<!DOCTYPE html>') || rawText.includes('<html')) {
+                Swal.fire({
+                    icon: 'info',
+                    title: lang === 'id' ? 'Memperbarui Sesi...' : 'Refreshing Session...',
+                    text: lang === 'id' 
+                        ? 'Koneksi keamanan server sedang diperbarui. Halaman akan dimuat ulang.' 
+                        : 'Security session is refreshing. Reloading page...',
+                    timer: 2000,
+                    showConfirmButton: false,
+                    allowOutsideClick: false
+                }).then(() => {
+                    window.location.reload();
+                });
+                return;
+            }
+
             let result;
             try {
                 result = JSON.parse(rawText);
@@ -1555,6 +2042,24 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
                     allowOutsideClick: false
                 }).then(() => {
                     window.location.href = 'login.php';
+                });
+                return;
+            }
+
+            // Detect WAF / Bot verification challenge or HTML interception
+            if (rawText.includes('One moment, please') || rawText.includes('wsidchk') || rawText.includes('failedChecks') || rawText.includes('<!DOCTYPE html>') || rawText.includes('<html')) {
+                hideEndTripLoader();
+                Swal.fire({
+                    icon: 'info',
+                    title: lang === 'id' ? 'Memperbarui Sesi...' : 'Refreshing Session...',
+                    text: lang === 'id' 
+                        ? 'Koneksi keamanan server sedang diperbarui. Halaman akan dimuat ulang.' 
+                        : 'Security session is refreshing. Reloading page...',
+                    timer: 2000,
+                    showConfirmButton: false,
+                    allowOutsideClick: false
+                }).then(() => {
+                    window.location.reload();
                 });
                 return;
             }
@@ -1663,6 +2168,529 @@ $pending_passenger_trips_count = (int)$stmt_pending_trips->fetchColumn();
             clockEl.innerHTML = `<div>${day} ${month} ${year}</div><div style="font-size: 0.95rem; color: var(--accent-color);">${hours}:${minutes}:${seconds}</div>`;
         }, 1000);
     }
+
+    function onPeriodChange(selectEl, startId, endId, mode) {
+        if (!selectEl.value || selectEl.value === 'custom') return;
+        const parts = selectEl.value.split('|');
+        if (parts.length !== 2) return;
+        const startDate = parts[0];
+        const endDate = parts[1];
+
+        const startInput = document.getElementById(startId);
+        const endInput = document.getElementById(endId);
+        if (startInput) startInput.value = startDate;
+        if (endInput) endInput.value = endDate;
+
+        if (mode === 'submit_att') {
+            const form = document.getElementById('attendance_filter_form');
+            if (form) form.submit();
+        } else if (mode === 'load_hris') {
+            if (typeof loadHrisData === 'function') {
+                loadHrisData(true);
+            }
+        }
+    }
+
+    function checkCustomPeriod(selectId, startVal, endVal) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const pair = (startVal || '') + '|' + (endVal || '');
+        let matched = false;
+        for (let i = 0; i < select.options.length; i++) {
+            if (select.options[i].value === pair) {
+                select.selectedIndex = i;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            let customOpt = select.querySelector('option[value="custom"]');
+            if (customOpt) {
+                customOpt.style.display = 'block';
+                select.value = 'custom';
+            }
+        }
+    }
+
+    let isHrisLoaded = false;
+
+    async function loadHrisData(force = false) {
+        if (isHrisLoaded && !force) return;
+        const nik = "<?= htmlspecialchars($driver_data['nik'] ?? '') ?>";
+        const startDate = document.getElementById('hris_start_date').value;
+        const endDate = document.getElementById('hris_end_date').value;
+        const box = document.getElementById('hrisContentBox');
+
+        if (!nik || nik.trim() === '' || nik === '-') {
+            box.innerHTML = `<div style="text-align:center; color:#ef4444; padding:30px; background:var(--card-bg); border-radius:12px; border:1px solid rgba(239,68,68,0.3);">⚠️ NIK Anda belum terdaftar di sistem. Silakan hubungi Admin untuk penginputan NIK.</div>`;
+            return;
+        }
+
+        box.innerHTML = `<div style="text-align:center; color:var(--pbi-blue); padding:30px; background:var(--card-bg); border-radius:12px;">Loading Data...</div>`;
+
+        try {
+            const apiUrl = `index.php?action=fetch_hris_proxy&emp_cd=${encodeURIComponent(nik)}&start_date=${startDate}&end_date=${endDate}`;
+            const res = await fetch(apiUrl);
+            const json = await res.json();
+
+            if (json.status === 'error') {
+                box.innerHTML = `<div style="text-align:center; color:#ef4444; padding:30px; background:var(--card-bg); border-radius:12px; border:1px solid rgba(239,68,68,0.3);">⚠️ ${escapeHtml(json.message)}</div>`;
+                return;
+            }
+
+            if (json.status !== 'success' || !json.data || json.data.length === 0) {
+                box.innerHTML = `<div style="text-align:center; color:#fbbf24; padding:30px; background:var(--card-bg); border-radius:12px; border:1px dashed var(--glass-border);">⚠️ Tidak ada data lembur di HRIS untuk NIK ${nik} pada periode ini.</div>`;
+                return;
+            }
+
+            isHrisLoaded = true;
+
+            let totalOt = 0;
+            let totalConvOt = 0;
+            let totalTransport = 0;
+            let totalOtDays = 0;
+
+            const mIdList = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agt', 'Sep', 'Okt', 'Nov', 'Des'];
+            const mEnList = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const dIdList = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+            const dEnList = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const isIndo = "<?= $_SESSION['lang'] ?? 'id' ?>" === 'id';
+
+            let rowsHtml = json.data.map(r => {
+                const otVal = parseFloat(r.time_total || 0);
+                const convVal = parseFloat(r.total_hour || 0);
+                totalOt += otVal;
+                totalConvOt += convVal;
+                totalTransport += parseFloat(r.transport_amt || 0);
+                if (otVal > 0) {
+                    totalOtDays++;
+                }
+
+                const dParts = r.trn_date.split('-');
+                const dateObj = new Date(parseInt(dParts[0]), parseInt(dParts[1]) - 1, parseInt(dParts[2]));
+                const dayNum = dParts[2];
+                const monthStr = isIndo ? mIdList[dateObj.getMonth()] : mEnList[dateObj.getMonth()];
+                const dayName = isIndo ? dIdList[dateObj.getDay()] : dEnList[dateObj.getDay()];
+                const dateCellHtml = `<strong>${dayNum} ${monthStr}</strong><div style="font-size: 0.65rem; color: var(--text-secondary); margin-top: 1px;">${dayName}</div>`;
+
+                const befFr = r.bef_time_fr ? r.bef_time_fr.substring(0, 5) : '-';
+                const befTo = r.bef_time_to ? r.bef_time_to.substring(0, 5) : '-';
+                const earlyStr = (befFr !== '-' && befTo !== '-' && befFr !== befTo) 
+                    ? `<strong>${befFr}</strong><div style="font-size: 0.65rem; color: var(--text-secondary); opacity: 0.6; margin-top: 1px;">${befTo}</div>` 
+                    : '-';
+
+                const timeFr = r.time_fr ? r.time_fr.substring(0, 5) : '-';
+                const timeTo = r.time_to ? r.time_to.substring(0, 5) : '-';
+                const lateStr = (timeFr !== '-' && timeTo !== '-' && timeFr !== timeTo) 
+                    ? `<div style="font-size: 0.65rem; color: var(--text-secondary); opacity: 0.6; margin-bottom: 1px;">${timeFr}</div><strong>${timeTo}</strong>` 
+                    : '-';
+
+                const breakStr = r.break_time > 0 ? `<span style="color:#ea580c; font-weight:bold;">${r.break_time}</span>` : '-';
+                const totalStr = r.time_total > 0 ? `<span style="color:var(--pbi-blue); font-weight:bold;">${r.time_total}</span>` : '-';
+                const convStr = r.total_hour > 0 ? `<span style="color:#107c10; font-weight:bold;">${r.total_hour}</span>` : '-';
+
+                return `
+                    <tr style="border-bottom: 1px solid var(--glass-border);">
+                        <td style="padding: 8px 6px;">${dateCellHtml}</td>
+                        <td style="padding: 8px 6px; text-align: center; color: var(--text-secondary);">${earlyStr}</td>
+                        <td style="padding: 8px 6px; text-align: center;">${lateStr}</td>
+                        <td style="padding: 8px 6px; text-align: center;">${breakStr}</td>
+                        <td style="padding: 8px 6px; text-align: center;">${totalStr}</td>
+                        <td style="padding: 8px 6px; text-align: center;">${convStr}</td>
+                        <td style="padding: 8px 6px; text-align: right; color:#107c10; font-weight:bold;">${(r.transport_amt || 0).toLocaleString('id-ID')}</td>
+                    </tr>
+                `;
+            }).join('');
+
+            box.innerHTML = `
+                <div style="overflow-x: auto; background: var(--card-bg); border-radius: 12px; border: 1px solid var(--glass-border);">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.72rem; white-space: nowrap;">
+                        <thead>
+                            <tr style="background: rgba(0,0,0,0.03); border-bottom: 2px solid var(--glass-border); color: var(--text-secondary);">
+                                <th style="padding: 8px 6px; text-align: left;">Tanggal</th>
+                                <th style="padding: 8px 6px; text-align: center;">Awal</th>
+                                <th style="padding: 8px 6px; text-align: center;">Akhir</th>
+                                <th style="padding: 8px 6px; text-align: center;">Break</th>
+                                <th style="padding: 8px 6px; text-align: center;">OT</th>
+                                <th style="padding: 8px 6px; text-align: center;">Conv</th>
+                                <th style="padding: 8px 6px; text-align: right;">Transport</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                        <tfoot style="border-top: 2px solid var(--glass-border); font-weight: bold; background: rgba(0,0,0,0.02);">
+                            <tr style="border-bottom: 1px dashed var(--glass-border);">
+                                <td colspan="4" style="padding: 6px 4px; text-align: right; color: var(--text-secondary); font-size: 0.7rem;">HARI LEMBUR:</td>
+                                <td style="padding: 6px 4px; text-align: center; color: #107c10; font-weight: bold;">${totalOtDays} Hari</td>
+                                <td style="padding: 6px 4px;"></td>
+                                <td style="padding: 6px 4px;"></td>
+                            </tr>
+                            <tr>
+                                <td colspan="4" style="padding: 8px 4px; text-align: right; color: var(--text-primary);">TOTAL HRIS:</td>
+                                <td style="padding: 8px 4px; text-align: center; color: var(--pbi-blue);">${totalOt.toFixed(2)}</td>
+                                <td style="padding: 8px 4px; text-align: center; color: #107c10;">${totalConvOt.toFixed(2)}</td>
+                                <td style="padding: 8px 4px; text-align: right; color: #107c10;">${totalTransport.toLocaleString('id-ID')}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <div style="margin-top: 16px; background: rgba(234, 88, 12, 0.08); border: 1px solid rgba(234, 88, 12, 0.3); border-radius: 12px; padding: 14px;">
+                    <h5 style="margin: 0 0 6px 0; color: #c2410c; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; font-weight: 700;">
+                        ⚠️ PENTING: Batas Waktu Koreksi Data
+                    </h5>
+                    <p style="margin: 0; font-size: 0.75rem; color: var(--text-primary); line-height: 1.5;">
+                        Segera laporkan jika terdapat <strong>ketidaksesuaian data</strong> sebelum <strong>tanggal 23</strong>.<br>
+                        <span style="color: #b91c1c; font-weight: 600;">Keterlambatan pelaporan beresiko menyebabkan data tidak terproses ke gaji bulan ini.</span>
+                    </p>
+                </div>
+            `;
+        } catch (err) {
+            box.innerHTML = `<div style="text-align:center; color:#ef4444; padding:30px; background:var(--card-bg); border-radius:12px; border:1px solid rgba(239,68,68,0.3);">⚠️ Gagal terhubung ke API HRIS: ${err.message}</div>`;
+        }
+    }
+
+    // HRIS Compare Logic for Overtime Tab
+    let isCompareEnabled = false;
+    let hrisCompareData = null;
+
+    async function recalculateDriverOt() {
+        const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
+        const confirmMsg = lang === 'id' 
+            ? 'Apakah Anda ingin menghitung ulang lembur untuk semua shift pada periode ini?' 
+            : 'Do you want to recalculate overtime for all shifts in this period?';
+        
+        if (!confirm(confirmMsg)) return;
+
+        const startDateInput = document.querySelector('input[name="att_start"]');
+        const endDateInput = document.querySelector('input[name="att_end"]');
+        const startDate = startDateInput ? startDateInput.value : '';
+        const endDate = endDateInput ? endDateInput.value : '';
+
+        const fd = new FormData();
+        fd.append('action', 'recalculate_ot');
+        fd.append('start_date', startDate);
+        fd.append('end_date', endDate);
+        fd.append('is_ajax', '1');
+
+        try {
+            const res = await fetch('manage_shift.php', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            const data = await res.json();
+            if (data.success) {
+                alert(data.msg || (lang === 'id' ? 'Lembur berhasil dihitung ulang!' : 'Overtime recalculated successfully!'));
+                location.reload();
+            } else {
+                alert('Error: ' + (data.error || 'Failed to recalculate'));
+            }
+        } catch(err) {
+            alert('JS Error: ' + err.message);
+        }
+    }
+
+    async function toggleHrisCompare() {
+        isCompareEnabled = !isCompareEnabled;
+        const btn = document.getElementById('compareToggleBtn');
+        const hrisCols = document.querySelectorAll('.col-hris-compare');
+        const convCols = document.querySelectorAll('.col-conv-ot');
+        const stsCols = document.querySelectorAll('.col-status-ot');
+        
+        if (isCompareEnabled) {
+            btn.style.background = '#118DFF';
+            btn.style.color = '#ffffff';
+            btn.innerHTML = '✔ Compare Active';
+            hrisCols.forEach(c => c.style.display = 'table-cell');
+            convCols.forEach(c => c.style.display = 'none');
+            stsCols.forEach(c => c.style.display = 'none');
+            
+            if (!hrisCompareData) {
+                await fetchHrisForCompare();
+            } else {
+                renderHrisCompareCells();
+            }
+        } else {
+            btn.style.background = 'rgba(17, 141, 255, 0.1)';
+            btn.style.color = 'var(--pbi-blue)';
+            btn.innerHTML = '🔍 Compare HRIS';
+            hrisCols.forEach(c => c.style.display = 'none');
+            convCols.forEach(c => c.style.display = 'table-cell');
+            stsCols.forEach(c => c.style.display = 'table-cell');
+        }
+    }
+
+    async function fetchHrisForCompare() {
+        const nik = "<?= htmlspecialchars($driver_data['nik'] ?? '') ?>";
+        if (!nik) return;
+        
+        const startDateInput = document.querySelector('input[name="att_start"]');
+        const endDateInput = document.querySelector('input[name="att_end"]');
+        const startDate = startDateInput ? startDateInput.value : "<?= $att_start ?>";
+        const endDate = endDateInput ? endDateInput.value : "<?= $att_end ?>";
+        
+        try {
+            const apiUrl = `index.php?action=fetch_hris_proxy&emp_cd=${encodeURIComponent(nik)}&start_date=${startDate}&end_date=${endDate}`;
+            const res = await fetch(apiUrl);
+            const json = await res.json();
+            
+            if (json.status === 'success' && json.data) {
+                hrisCompareData = json.data;
+                renderHrisCompareCells();
+            }
+        } catch(e) {
+            console.error("Failed to load HRIS compare data:", e);
+        }
+    }
+
+    function renderHrisCompareCells() {
+        if (!hrisCompareData) return;
+        
+        let totalHrisOt = 0;
+        let totalHrisBreak = 0;
+        let totalHrisDays = 0;
+        
+        document.querySelectorAll('.hris-compare-cell').forEach(cell => {
+            const dateStr = cell.dataset.date;
+            const webOt = parseFloat(cell.dataset.webOt || 0);
+            
+            const tr = cell.closest('tr');
+            const breakCell = tr ? tr.querySelector('.hris-break-cell') : null;
+            
+            const hrisRow = hrisCompareData.find(r => r.trn_date === dateStr);
+            
+            if (hrisRow) {
+                const hrisOt = parseFloat(hrisRow.time_total || 0);
+                const breakTime = parseFloat(hrisRow.break_time || 0);
+                const totalHrisNet = hrisOt + breakTime;
+
+                if (hrisOt > 0 || breakTime > 0) totalHrisDays++;
+                totalHrisOt += hrisOt;
+                totalHrisBreak += breakTime;
+
+                if (breakCell) {
+                    breakCell.innerHTML = breakTime > 0 ? `<span style="color:#ea580c; font-weight:bold;">${breakTime}</span>` : '-';
+                }
+                
+                if (totalHrisNet < (webOt - 0.01)) {
+                    // RED HIGHLIGHT ONLY IF (HRIS OT + Break) is LESS than WEB OT!
+                    cell.innerHTML = `<span style="color: #dc2626; font-weight: 800; background: rgba(220,38,38,0.12); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(220,38,38,0.3); display: inline-block;" title="HRIS (${hrisOt}) + Break (${breakTime}) = ${totalHrisNet.toFixed(2)} < Web (${webOt})">${hrisOt > 0 ? hrisOt : '0'} ⚠️</span>`;
+                } else {
+                    cell.innerHTML = `<span style="color: #166534; font-weight: bold;">${hrisOt > 0 ? hrisOt : '-'}</span>`;
+                }
+            } else {
+                if (breakCell) breakCell.innerHTML = '-';
+
+                if (webOt > 0) {
+                    // Red warning if Web has OT but HRIS has NO entry (0)
+                    cell.innerHTML = `<span style="color: #dc2626; font-weight: 800; background: rgba(220,38,38,0.12); padding: 2px 6px; border-radius: 4px; border: 1px solid rgba(220,38,38,0.3); display: inline-block;" title="Tidak ada di HRIS!">0 ⚠️</span>`;
+                } else {
+                    cell.innerHTML = `<span style="color: var(--text-secondary);">-</span>`;
+                }
+            }
+        });
+        
+        const daysCell = document.getElementById('hrisTotalDaysCell');
+        const otCell = document.getElementById('hrisTotalOtCell');
+        const breakTotalCell = document.getElementById('hrisTotalBreakCell');
+
+        if (daysCell) daysCell.innerHTML = `${totalHrisDays} Hari`;
+        if (otCell) otCell.innerHTML = totalHrisOt > 0 ? totalHrisOt.toFixed(2) : '-';
+        if (breakTotalCell) breakTotalCell.innerHTML = totalHrisBreak > 0 ? `<span style="color:#ea580c;">${totalHrisBreak.toFixed(2)}</span>` : '-';
+    }
+
+    async function exportDriverOtPdf() {
+        if (!window.jspdf) {
+            alert('Library PDF sedang dimuat, mohon tunggu sebentar...');
+            return;
+        }
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+        
+        const driverName = "<?= htmlspecialchars($driver_data['full_name'] ?? 'Driver') ?>";
+        const nik = "<?= htmlspecialchars($driver_data['nik'] ?? '-') ?>";
+        const startDateInput = document.querySelector('input[name="att_start"]');
+        const endDateInput = document.querySelector('input[name="att_end"]');
+        const startDate = startDateInput ? startDateInput.value : "<?= $att_start ?>";
+        const endDate = endDateInput ? endDateInput.value : "<?= $att_end ?>";
+        
+        // Fetch HRIS data if not fetched yet
+        if (!hrisCompareData && nik !== '-') {
+            try {
+                const apiUrl = `index.php?action=fetch_hris_proxy&emp_cd=${encodeURIComponent(nik)}&start_date=${startDate}&end_date=${endDate}`;
+                const res = await fetch(apiUrl);
+                const json = await res.json();
+                if (json.status === 'success' && json.data) {
+                    hrisCompareData = json.data;
+                }
+            } catch(e){}
+        }
+
+        // Title Header
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
+        doc.setTextColor(15, 23, 42);
+        doc.text('LAPORAN KOMPARASI LEMBUR DRIVER (CROSCEK HRIS)', 14, 15);
+        
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(71, 85, 105);
+        doc.text(`Nama Driver  : ${driverName}`, 14, 21);
+        doc.text(`NIK Driver   : ${nik}`, 14, 26);
+        doc.text(`Periode      : ${startDate} s/d ${endDate}`, 140, 21);
+        doc.text(`Tgl Cetak    : ${new Date().toLocaleString('id-ID')}`, 140, 26);
+
+        // Extract table rows from DOM & HRIS cache
+        const tableRows = [];
+        const domRows = document.querySelectorAll('.pbi-table tbody tr');
+        
+        let totalWebOt = 0;
+        let totalHrisOt = 0;
+        let totalTransport = 0;
+        let webOtDays = 0;
+        let hrisOtDays = 0;
+        let mismatchCount = 0;
+
+        domRows.forEach(tr => {
+            const tds = tr.querySelectorAll('td');
+            if (tds.length < 6) return;
+
+            const tglText = tds[0].innerText.replace(/\s+/g, ' ').trim();
+            const jamText = tds[1].innerText.replace(/\n/g, ' / ').trim();
+            const awalText = tds[2].innerText.trim();
+            const akhirText = tds[3].innerText.trim();
+            const tipeText = tds[4].innerText.trim();
+            const webOtText = tds[5].innerText.trim();
+            
+            const dateCell = tr.querySelector('.hris-compare-cell');
+            const dateStr = dateCell ? dateCell.dataset.date : '';
+            const webOtVal = parseFloat(webOtText) || 0;
+            totalWebOt += webOtVal;
+            if (webOtVal > 0 || awalText !== '-' || akhirText !== '-') {
+                webOtDays++;
+            }
+
+            let hrisOtVal = 0;
+            let breakVal = 0;
+            let transportVal = 0;
+            let statusText = 'OK (Sesuai)';
+
+            if (hrisCompareData && dateStr) {
+                const hrisRow = hrisCompareData.find(r => r.trn_date === dateStr);
+                if (hrisRow) {
+                    hrisOtVal = parseFloat(hrisRow.time_total || 0);
+                    breakVal = parseFloat(hrisRow.break_time || 0);
+                    transportVal = parseFloat(hrisRow.transport_amt || 0);
+
+                    const totalHrisNet = hrisOtVal + breakVal;
+
+                    if (totalHrisNet < (webOtVal - 0.01)) {
+                        statusText = '[!] HRIS < WEB';
+                        mismatchCount++;
+                    }
+                } else if (webOtVal > 0) {
+                    statusText = '[!] Tidak Ada di HRIS';
+                    mismatchCount++;
+                }
+            }
+            if (hrisOtVal > 0) {
+                hrisOtDays++;
+            }
+            totalHrisOt += hrisOtVal;
+            totalTransport += transportVal;
+
+            tableRows.push([
+                tglText,
+                jamText,
+                awalText,
+                akhirText,
+                tipeText,
+                webOtVal > 0 ? webOtVal.toString() : '-',
+                breakVal > 0 ? breakVal.toString() : '-',
+                hrisOtVal > 0 ? hrisOtVal.toString() : '-',
+                transportVal > 0 ? transportVal.toLocaleString('id-ID') : '-',
+                statusText
+            ]);
+        });
+
+        doc.autoTable({
+            startY: 32,
+            head: [['Tanggal', 'Jam Shift', 'Awal', 'Akhir', 'Tipe', 'Web OT', 'Break', 'HRIS OT', 'Transport', 'Status Croscek']],
+            body: tableRows,
+            theme: 'grid',
+            headStyles: { fillColor: [17, 141, 255], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+            bodyStyles: { fontSize: 8, cellPadding: 2 },
+            columnStyles: {
+                0: { cellWidth: 24 },
+                1: { cellWidth: 30, halign: 'center' },
+                2: { cellWidth: 16, halign: 'center' },
+                3: { cellWidth: 16, halign: 'center' },
+                4: { cellWidth: 14, halign: 'center' },
+                5: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+                6: { cellWidth: 16, halign: 'center' },
+                7: { cellWidth: 20, halign: 'center', fontStyle: 'bold' },
+                8: { cellWidth: 24, halign: 'right', fontStyle: 'bold' },
+                9: { cellWidth: 70 }
+            },
+            didParseCell: function(data) {
+                if (data.section === 'body') {
+                    const rowData = tableRows[data.row.index];
+                    if (rowData && rowData[9].includes('[!]')) {
+                        data.cell.styles.fillColor = [254, 226, 226];
+                        data.cell.styles.textColor = [185, 28, 28];
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+            }
+        });
+
+        const finalY = doc.lastAutoTable.finalY + 8;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text('REKAPITULASI SUMMARY:', 14, finalY);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Total Web OT: ${totalWebOt.toFixed(2)} Jam (${webOtDays} Hari)   |   Total HRIS OT: ${totalHrisOt.toFixed(2)} Jam (${hrisOtDays} Hari)   |   Total Transport HRIS: ${totalTransport.toLocaleString('id-ID')}`, 14, finalY + 5);
+        
+        if (mismatchCount > 0) {
+            doc.setTextColor(185, 28, 28);
+            doc.setFont('helvetica', 'bold');
+            const noteText = `[!] Catatan: Ditemukan ${mismatchCount} hari ketidaksesuaian data (HRIS < Web). Perbedaan nilai sebagian besar disebabkan oleh potongan jam istirahat (Break Time) pada HRIS. Mohon Admin melakukan croscek.`;
+            const splitNote = doc.splitTextToSize(noteText, 265);
+            doc.text(splitNote, 14, finalY + 11);
+        } else {
+            doc.setTextColor(22, 101, 52);
+            const noteText = `[OK] Catatan: Seluruh data lembur sesuai antara Web dan HRIS.`;
+            const splitNote = doc.splitTextToSize(noteText, 265);
+            doc.text(splitNote, 14, finalY + 11);
+        }
+
+        const safeDriverName = driverName.replace(/[^a-zA-Z0-9_]/g, '_');
+        doc.save(`Croscek_Lembur_${safeDriverName}_${startDate}.pdf`);
+    }
+
+    // Keep-alive heartbeat: maintains session & WAF clearance cookie automatically
+    setInterval(() => {
+        fetch('ping.php').catch(() => {});
+    }, 10 * 60 * 1000); // Ping every 10 minutes
+
+    // Auto-refresh security token when tab becomes visible after phone sleep
+    let lastTabActiveTime = Date.now();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            const idleTime = Date.now() - lastTabActiveTime;
+            lastTabActiveTime = Date.now();
+            if (idleTime > 25 * 60 * 1000) { // Idle for > 25 mins
+                fetch('ping.php')
+                    .then(r => r.text())
+                    .then(t => {
+                        if (t.includes('<!DOCTYPE html>') || t.includes('One moment, please') || t.includes('wsidchk')) {
+                            window.location.reload();
+                        }
+                    })
+                    .catch(() => {});
+            }
+        } else {
+            lastTabActiveTime = Date.now();
+        }
+    });
     </script>
 
     <!-- Image Viewer Modal (Full Size) -->

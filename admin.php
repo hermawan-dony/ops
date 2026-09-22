@@ -259,6 +259,12 @@ $dest_res = $pdo->query("SELECT d.name, COUNT(*) as c FROM trips t JOIN master_d
 $dest_labels = json_encode(array_column($dest_res, 'name'));
 $dest_values = json_encode(array_column($dest_res, 'c'));
 
+$pending_notes_count = $pdo->query("SELECT COUNT(*) FROM shifts WHERE note_status = 'pending_admin'")->fetchColumn() ?: 0;
+$show_note_popup = false;
+if ($pending_notes_count > 0 && empty($_SESSION['note_popup_shown'])) {
+    $show_note_popup = true;
+    $_SESSION['note_popup_shown'] = true;
+}
 $is_collapsed = isset($_SESSION['sidebar_collapsed']) && $_SESSION['sidebar_collapsed'];
 $theme = $_SESSION['theme'] ?? 'light';
 ?>
@@ -271,6 +277,7 @@ $theme = $_SESSION['theme'] ?? 'light';
     <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         :root {
             --pbi-blue: #118DFF; --pbi-bg: #F3F2F1; --pbi-dark: #333;
@@ -933,6 +940,32 @@ $theme = $_SESSION['theme'] ?? 'light';
 
         new Chart(document.getElementById('trendChart'), { type: 'line', data: { labels: <?php echo $chart_labels; ?>, datasets: [{ data: <?php echo $chart_values; ?>, borderColor: '#118DFF', backgroundColor: 'rgba(17, 141, 255, 0.1)', fill: true, tension: 0.4, pointRadius: 0 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false } } } });
         new Chart(document.getElementById('destChart'), { type: 'doughnut', data: { labels: <?php echo $dest_labels; ?>, datasets: [{ data: <?php echo $dest_values; ?>, backgroundColor: ['#118DFF', '#12239E', '#E66C37', '#6B007B', '#E044A7'], borderWidth: 0 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '70%', plugins: { legend: { position: 'right', labels: { boxWidth: 8, font: { size: 9 }, color: '<?php echo $theme=='dark'?'#f8fafc':'#666'; ?>' } } } } });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const pendingNotesCount = <?php echo intval($pending_notes_count); ?>;
+            const shouldShowPopup = <?php echo $show_note_popup ? 'true' : 'false'; ?>;
+            const isId = "<?php echo $_SESSION['lang'] ?? 'en'; ?>" === 'id';
+
+            if (shouldShowPopup && pendingNotesCount > 0) {
+                setTimeout(() => {
+                    Swal.fire({
+                        title: isId ? '🔔 Catatan Penumpang (User) Pending!' : '🔔 Pending Passenger Notes!',
+                        html: isId ? 
+                            `Terdapat <strong style="color: #d97706; font-size: 1.1rem;">${pendingNotesCount} shift</strong> dengan catatan dari penumpang yang belum dibalas oleh Admin.` : 
+                            `You have <strong style="color: #d97706; font-size: 1.1rem;">${pendingNotesCount} shift(s)</strong> with unreplied notes from passengers.`,
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonColor: '#118DFF',
+                        confirmButtonText: isId ? '🔍 Lihat Pesan Pending' : '🔍 View Pending Notes',
+                        cancelButtonText: isId ? 'Nanti Saja' : 'Later'
+                    }).then((result) => {
+                        if (result.isConfirmed) {
+                            window.location.href = 'shift_messages.php?filter=pending';
+                        }
+                    });
+                }, 500);
+            }
+        });
     </script>
 </body>
 </html>

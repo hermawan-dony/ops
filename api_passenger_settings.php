@@ -11,8 +11,8 @@ $passenger_id = $_SESSION['passenger_id'];
 $old_pin = $_POST['old_pin'] ?? '';
 $new_pin = $_POST['new_pin'] ?? '';
 
-if (strlen($new_pin) !== 6 || !is_numeric($new_pin)) {
-    echo json_encode(['success' => false, 'error' => 'New PIN must be exactly 6 digits.']);
+if (strlen($new_pin) !== 4 || !is_numeric($new_pin)) {
+    echo json_encode(['success' => false, 'error' => 'New PIN must be exactly 4 digits.']);
     exit;
 }
 

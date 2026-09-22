@@ -1,6 +1,32 @@
 <?php
 require_once 'config.php';
 
+// Check for passwordless token auto-login
+if (isset($_GET['supervisor_id']) && isset($_GET['token']) && isset($_GET['start_date']) && isset($_GET['end_date'])) {
+    $sv_id = intval($_GET['supervisor_id']);
+    $s_date = $_GET['start_date'];
+    $e_date = $_GET['end_date'];
+    $tok = $_GET['token'];
+    $secret_key = 'framas_shift_secret_2026';
+    
+    $expected_tok = md5($sv_id . $s_date . $e_date . $secret_key);
+    if (hash_equals($expected_tok, $tok)) {
+        // Fetch supervisor details
+        $stmt_spv = $pdo->prepare("SELECT * FROM master_passengers WHERE id = ?");
+        $stmt_spv->execute([$sv_id]);
+        $spv = $stmt_spv->fetch();
+        if ($spv) {
+            $_SESSION['passenger_id'] = $spv['id'];
+            $_SESSION['passenger_name'] = $spv['name'];
+            if (!isset($_SESSION['lang'])) {
+                $_SESSION['lang'] = 'en';
+            }
+            header("Location: passenger_dashboard.php?start_date=" . urlencode($s_date) . "&end_date=" . urlencode($e_date));
+            exit;
+        }
+    }
+}
+
 if (!isset($_SESSION['passenger_id'])) {
     header('Location: passenger_login.php');
     exit;
@@ -42,21 +68,113 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         }
         exit;
     }
-    if ($_POST['action'] === 'approve_all_ot') {
+    if ($_POST['action'] === 'approve_selected_ot' || $_POST['action'] === 'approve_all_ot') {
         $start = $_POST['start_date'];
         $end = $_POST['end_date'];
+        $selected = $_POST['selected_shifts'] ?? [];
         try {
-            $stmt = $pdo->prepare("
-                UPDATE shifts s
-                JOIN users u ON s.driver_id = u.id
-                SET s.approval_status = 'approved', s.approved_by_name = ?, s.approved_at = CURRENT_TIMESTAMP
-                WHERE u.supervisor_id = ? AND s.status = 'completed' AND s.approval_status = 'pending'
-                  AND s.shift_date BETWEEN ? AND ?
-            ");
-            $stmt->execute(['Spv: ' . $passenger_name, $passenger_id, $start, $end]);
-            header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}&msg=" . urlencode("Successfully approved all pending overtime shifts in range"));
+            if (!empty($selected) && is_array($selected)) {
+                $placeholders = implode(',', array_fill(0, count($selected), '?'));
+                $params = array_merge(['Spv: ' . $passenger_name, $passenger_id], $selected);
+                $stmt = $pdo->prepare("
+                    UPDATE shifts s
+                    JOIN users u ON s.driver_id = u.id
+                    SET s.approval_status = 'approved', s.approved_by_name = ?, s.approved_at = CURRENT_TIMESTAMP
+                    WHERE u.supervisor_id = ? AND s.status = 'completed'
+                      AND s.id IN ($placeholders)
+                ");
+                $stmt->execute($params);
+                $count = count($selected);
+                $msg_text = ($lang === 'id') ? "Berhasil menyetujui {$count} shift lembur." : "Successfully approved {$count} selected overtime shift(s)";
+                header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}&msg=" . urlencode($msg_text));
+            } else {
+                $stmt = $pdo->prepare("
+                    UPDATE shifts s
+                    JOIN users u ON s.driver_id = u.id
+                    SET s.approval_status = 'approved', s.approved_by_name = ?, s.approved_at = CURRENT_TIMESTAMP
+                    WHERE u.supervisor_id = ? AND s.status = 'completed' AND s.approval_status = 'pending'
+                      AND s.shift_date BETWEEN ? AND ?
+                ");
+                $stmt->execute(['Spv: ' . $passenger_name, $passenger_id, $start, $end]);
+                header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}&msg=" . urlencode("Successfully approved pending overtime shifts in range"));
+            }
         } catch (Exception $e) {
             header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}&err=" . urlencode("Failed to approve: " . $e->getMessage()));
+        }
+        exit;
+    }
+    if ($_POST['action'] === 'reject_selected_ot') {
+        $start = $_POST['start_date'] ?? '';
+        $end = $_POST['end_date'] ?? '';
+        $selected = $_POST['selected_shifts'] ?? [];
+        $reason = trim($_POST['rejection_reason'] ?? '');
+        
+        try {
+            if (!empty($selected) && is_array($selected)) {
+                $placeholders = implode(',', array_fill(0, count($selected), '?'));
+                $params = array_merge(['Spv: ' . $passenger_name, $reason, $passenger_id], $selected);
+                $stmt = $pdo->prepare("
+                    UPDATE shifts s
+                    JOIN users u ON s.driver_id = u.id
+                    SET s.approval_status = 'rejected', s.approved_by_name = ?, s.last_note = ?, s.note_status = 'pending_admin', s.approved_at = CURRENT_TIMESTAMP
+                    WHERE u.supervisor_id = ? AND s.status = 'completed'
+                      AND s.id IN ($placeholders)
+                ");
+                $stmt->execute($params);
+
+                // Insert comment into shift_comments for each rejected shift
+                $stmt_comment = $pdo->prepare("INSERT INTO shift_comments (shift_id, user_type, user_id, user_name, comment) VALUES (?, 'passenger', ?, ?, ?)");
+                foreach ($selected as $s_id) {
+                    $stmt_comment->execute([$s_id, $passenger_id, $passenger_name, $reason]);
+                }
+                $count = count($selected);
+                $msg_text = ($lang === 'id') ? "Berhasil menolak {$count} shift lembur." : "Successfully rejected {$count} selected overtime shift(s).";
+                header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}&msg=" . urlencode($msg_text));
+            } else {
+                header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}");
+            }
+        } catch (Exception $e) {
+            header("Location: passenger_dashboard.php?start_date={$start}&end_date={$end}&err=" . urlencode("Failed to reject: " . $e->getMessage()));
+        }
+        exit;
+    }
+    if ($_POST['action'] === 'get_shift_comments') {
+        header('Content-Type: application/json');
+        try {
+            $shift_id = intval($_POST['shift_id'] ?? 0);
+            $stmt_s = $pdo->prepare("SELECT s.*, u.full_name as driver_name FROM shifts s JOIN users u ON s.driver_id = u.id WHERE s.id = ?");
+            $stmt_s->execute([$shift_id]);
+            $shift = $stmt_s->fetch(PDO::FETCH_ASSOC);
+
+            $stmt_c = $pdo->prepare("SELECT * FROM shift_comments WHERE shift_id = ? ORDER BY created_at ASC");
+            $stmt_c->execute([$shift_id]);
+            $comments = $stmt_c->fetchAll(PDO::FETCH_ASSOC);
+
+            echo json_encode(['success' => true, 'shift' => $shift, 'comments' => $comments]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+    if ($_POST['action'] === 'add_shift_comment') {
+        header('Content-Type: application/json');
+        try {
+            $shift_id = intval($_POST['shift_id'] ?? 0);
+            $comment = trim($_POST['comment'] ?? '');
+            if (!$shift_id || empty($comment)) {
+                echo json_encode(['success' => false, 'error' => 'Comment cannot be empty.']);
+                exit;
+            }
+
+            $stmt_c = $pdo->prepare("INSERT INTO shift_comments (shift_id, user_type, user_id, user_name, comment) VALUES (?, 'passenger', ?, ?, ?)");
+            $stmt_c->execute([$shift_id, $passenger_id, $passenger_name, $comment]);
+
+            $stmt_u = $pdo->prepare("UPDATE shifts SET last_note = ?, note_status = 'pending_admin' WHERE id = ?");
+            $stmt_u->execute([$comment, $shift_id]);
+
+            echo json_encode(['success' => true]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
     }
@@ -103,8 +221,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 }
 
 // 1. Calculate Date Range (Weekly: Monday to Sunday of the active week)
-$start_date = $_GET['start_date'] ?? date('Y-m-d', strtotime('monday this week'));
-$end_date = $_GET['end_date'] ?? date('Y-m-d', strtotime('sunday this week'));
+if (isset($_GET['start_date']) && isset($_GET['end_date'])) {
+    $start_date = $_GET['start_date'];
+    $end_date = $_GET['end_date'];
+} else {
+    $today_dt = new DateTime();
+    $day_of_week = (int)$today_dt->format('N'); // 1 = Mon, 7 = Sun
+    $mon_dt = clone $today_dt;
+    $mon_dt->modify('-' . ($day_of_week - 1) . ' days');
+    $sun_dt = clone $mon_dt;
+    $sun_dt->modify('+6 days');
+
+    $start_date = $mon_dt->format('Y-m-d');
+    $end_date = $sun_dt->format('Y-m-d');
+}
 
 // 2. Fetch Passenger's Own Trip History (Read-only)
 $stmt_my_trips = $pdo->prepare("SELECT t.*, d.name as dest_name, u.full_name as driver_name, c.car_no, s.shift_date,
@@ -138,13 +268,20 @@ if ($is_supervisor) {
     $stmt_sup_shifts->execute([$passenger_id, $start_date, $end_date]);
     $supervisor_shifts = $stmt_sup_shifts->fetchAll();
 
+    $total_real_ot = 0;
+    $total_conv_ot = 0;
+    $approved_conv_ot = 0;
+    $pending_conv_ot = 0;
+
     foreach ($supervisor_shifts as $s) {
-        $val = floatval($s['conv_ot'] ?: 0);
-        $total_conv_ot += $val;
+        $real_val = floatval($s['real_ot'] ?: 0);
+        $conv_val = floatval($s['conv_ot'] ?: 0);
+        $total_real_ot += $real_val;
+        $total_conv_ot += $conv_val;
         if ($s['approval_status'] === 'approved') {
-            $approved_conv_ot += $val;
+            $approved_conv_ot += $conv_val;
         } elseif ($s['approval_status'] === 'pending') {
-            $pending_conv_ot += $val;
+            $pending_conv_ot += $conv_val;
         }
     }
 
@@ -181,17 +318,70 @@ if ($is_supervisor) {
 // Fetch mandatory_photo setting
 $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting_key = 'mandatory_photo'")->fetchColumn() ?: '1';
 
-// Dynamic Greeting based on time
-$hour = (int)date('H');
-$lang = $_SESSION['lang'];
-if ($hour >= 4 && $hour < 12) {
-    $greeting = ($lang === 'id') ? 'Selamat Pagi' : 'Good Morning';
-} elseif ($hour >= 12 && $hour < 17) {
-    $greeting = ($lang === 'id') ? 'Selamat Siang' : 'Good Afternoon';
-} elseif ($hour >= 17 && $hour < 22) {
-    $greeting = ($lang === 'id') ? 'Selamat Malam' : 'Good Evening';
+// Fetch Assigned Driver & Car Info for this Passenger / Supervisor
+$driver_info_badge = '';
+$stmt_driver_info = $pdo->prepare("
+    SELECT u.full_name as driver_name, c.car_no 
+    FROM users u 
+    LEFT JOIN master_cars c ON u.preferred_car_id = c.id 
+    WHERE u.supervisor_id = ? 
+    ORDER BY u.id ASC LIMIT 1
+");
+$stmt_driver_info->execute([$passenger_id]);
+$d_info = $stmt_driver_info->fetch();
+
+if ($d_info && !empty($d_info['driver_name'])) {
+    $driver_info_badge = strtoupper($d_info['driver_name']);
+    if (!empty($d_info['car_no'])) {
+        $driver_info_badge .= ' - ' . strtoupper($d_info['car_no']);
+    }
 } else {
-    $greeting = ($lang === 'id') ? 'Selamat Malam' : 'Good Night';
+    // Fallback if passenger has recent trips
+    if (!empty($my_trips) && !empty($my_trips[0]['driver_name'])) {
+        $driver_info_badge = strtoupper($my_trips[0]['driver_name']);
+        if (!empty($my_trips[0]['car_no'])) {
+            $driver_info_badge .= ' - ' . strtoupper($my_trips[0]['car_no']);
+        }
+    }
+}
+
+// Dynamic Time Greeting (Bilingual)
+$hour = (int)date('H');
+if ($lang === 'id') {
+    if ($hour >= 4 && $hour < 11) {
+        $greeting = 'Selamat Pagi';
+    } elseif ($hour >= 11 && $hour < 15) {
+        $greeting = 'Selamat Siang';
+    } elseif ($hour >= 15 && $hour < 18) {
+        $greeting = 'Selamat Sore';
+    } else {
+        $greeting = 'Selamat Malam';
+    }
+} else {
+    if ($hour >= 4 && $hour < 12) {
+        $greeting = 'Good Morning';
+    } elseif ($hour >= 12 && $hour < 17) {
+        $greeting = 'Good Afternoon';
+    } else {
+        $greeting = 'Good Evening';
+    }
+}
+
+// Helper for Bilingual Short Date Format
+function format_date_bilingual($date_str, $lang = 'en', $format = 'd M Y') {
+    if (!$date_str) return '-';
+    $ts = strtotime($date_str);
+    if ($lang === 'id') {
+        $months_id = [1 => 'Jan', 2 => 'Feb', 3 => 'Mar', 4 => 'Apr', 5 => 'Mei', 6 => 'Jun', 7 => 'Jul', 8 => 'Agt', 9 => 'Sep', 10 => 'Okt', 11 => 'Nov', 12 => 'Des'];
+        $m = (int)date('n', $ts);
+        $d = date('d', $ts);
+        $y = date('Y', $ts);
+        if ($format === 'd M') {
+            return $d . ' ' . $months_id[$m];
+        }
+        return $d . ' ' . $months_id[$m] . ' ' . $y;
+    }
+    return date($format, $ts);
 }
 ?>
 <!DOCTYPE html>
@@ -253,17 +443,17 @@ if ($hour >= 4 && $hour < 12) {
 
         /* Premium Gradient Header Banner with Image overlay */
         .header-banner {
-            background: linear-gradient(135deg, rgba(15, 23, 42, 0.9) 0%, rgba(30, 41, 59, 0.95) 50%, rgba(37, 99, 235, 0.8) 100%), url('corporate_banner.png');
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.92) 0%, rgba(30, 41, 59, 0.95) 50%, rgba(37, 99, 235, 0.85) 100%), url('corporate_banner.png');
             background-size: cover;
             background-position: center;
-            padding: 32px 24px;
+            padding: 14px 20px;
             color: white;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 4px solid var(--primary-accent);
+            border-bottom: 3px solid var(--primary-accent);
             box-shadow: var(--header-shadow);
-            border-radius: 0 0 16px 16px;
+            border-radius: 0 0 12px 12px;
         }
 
         .header-title-box {
@@ -273,31 +463,50 @@ if ($hour >= 4 && $hour < 12) {
 
         .header-title {
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1.15rem;
             font-weight: 700;
             font-family: 'Outfit', sans-serif;
             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
 
         .header-subtitle {
-            margin: 6px 0 0 0;
-            font-size: 0.9rem;
+            margin: 2px 0 0 0;
+            font-size: 0.75rem;
             color: #94a3b8;
             font-weight: 600;
             letter-spacing: 0.5px;
         }
 
+        .driver-info-badge {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            backdrop-filter: blur(8px);
+            font-size: 0.78rem;
+            font-weight: 700;
+            padding: 4px 12px;
+            border-radius: 8px;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            white-space: nowrap;
+            margin-top: 6px;
+            align-self: flex-start;
+        }
+
         .btn-logout {
             color: white;
             text-decoration: none;
-            font-size: 0.85rem;
+            font-size: 0.78rem;
             font-weight: 700;
-            padding: 10px 20px;
-            border-radius: 10px;
+            padding: 6px 14px;
+            border-radius: 8px;
             background: rgba(239, 68, 68, 0.9);
             border: 1px solid rgba(239, 68, 68, 0.5);
             transition: all 0.2s ease;
-            box-shadow: 0 4px 6px rgba(239, 68, 68, 0.2);
+            box-shadow: 0 2px 4px rgba(239, 68, 68, 0.2);
         }
 
         .btn-logout:hover {
@@ -567,13 +776,77 @@ if ($hour >= 4 && $hour < 12) {
         .modal { display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); }
         .modal-content { background: var(--card-bg); margin: 10% auto; padding: 24px; border-radius: 12px; width: 450px; max-width: 90%; border: 1px solid var(--border-color); }
 
-        /* Mobile Responsive Adjustments */
+        /* Fixed Bottom Navigation Styling */
+        body {
+            padding-bottom: 75px;
+        }
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            width: 100%;
+            background: #ffffff;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 8px 0 10px 0;
+            z-index: 1500;
+            box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
+            backdrop-filter: blur(10px);
+        }
+
+        .bottom-nav-item {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 0.72rem;
+            font-weight: 700;
+            cursor: pointer;
+            padding: 4px 0;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .bottom-nav-item.active {
+            color: var(--primary-accent);
+        }
+
+        .bottom-nav-icon {
+            font-size: 1.3rem;
+            line-height: 1;
+        }
+
+        /* Mobile Responsive & Card Transformation (No Horizontal Scroll Needed) */
         @media (max-width: 768px) {
             .header-banner {
+                position: relative;
                 flex-direction: column;
-                gap: 16px;
-                text-align: center;
-                padding: 24px 16px;
+                align-items: flex-start;
+                text-align: left;
+                padding: 20px 16px;
+                padding-right: 95px;
+            }
+            .header-title {
+                font-size: 1.15rem;
+            }
+            .header-subtitle {
+                font-size: 0.75rem;
+            }
+            .btn-logout {
+                position: absolute;
+                top: 16px;
+                right: 16px;
+                font-size: 0.75rem;
+                padding: 5px 12px;
+                border-radius: 6px;
             }
             .filter-form {
                 flex-direction: column;
@@ -585,9 +858,66 @@ if ($hour >= 4 && $hour < 12) {
             .btn-submit {
                 width: 100%;
             }
-            .corporate-table th, .corporate-table td {
+            .dashboard-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+                margin-bottom: 12px;
+            }
+            .dashboard-card {
                 padding: 10px 12px;
-                font-size: 0.8rem;
+                border-radius: 10px;
+                gap: 2px;
+            }
+            .dashboard-card-label {
+                font-size: 0.68rem;
+            }
+            .dashboard-card-value {
+                font-size: 1.05rem;
+            }
+            .data-table-container {
+                overflow-x: auto;
+                border-radius: 12px;
+                background: var(--card-bg);
+            }
+            .corporate-table {
+                width: 100%;
+                font-size: 0.82rem;
+            }
+            .corporate-table th, .corporate-table td {
+                padding: 10px 6px;
+                font-size: 0.82rem;
+            }
+            .desktop-only-btn {
+                display: none !important;
+            }
+            
+            /* Mobile Compact Cards for Expenses Table */
+            #expenseTable .desktop-only-cell {
+                display: none !important;
+            }
+            #expenseTable .mobile-only-cell {
+                display: block !important;
+            }
+            #expenseTable, #expenseTable tbody, #expenseTable tr {
+                display: block;
+                width: 100%;
+                box-sizing: border-box;
+            }
+            #expenseTable thead {
+                display: none;
+            }
+            #expenseTable tr.expense-tr {
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                border-radius: 12px;
+                margin-bottom: 10px;
+                padding: 12px 14px;
+                box-shadow: var(--card-shadow);
+            }
+        }
+        @media (min-width: 769px) {
+            #expenseTable .mobile-only-cell {
+                display: none !important;
             }
         }
     </style>
@@ -603,15 +933,21 @@ if ($hour >= 4 && $hour < 12) {
         </div>
     </div>
 
-    <!-- Premium Header Banner -->
+    <!-- Premium Compact Header Banner -->
     <div class="header-banner">
         <div class="header-title-box">
             <h1 class="header-title"><?= $greeting ?>, <?= htmlspecialchars($passenger_name) ?></h1>
             <p class="header-subtitle"><?= $is_supervisor ? ($lang === 'id' ? 'Portal Verifikasi & Operasional Driver' : 'Driver Operations & Approvals Console') : ($lang === 'id' ? 'Dashboard Penumpang' : 'Passenger Dashboard') ?></p>
+            <?php 
+                $initial_tab = $_GET['tab'] ?? ($is_supervisor ? 'overtime' : 'my_history');
+                if (!empty($driver_info_badge)): 
+            ?>
+                <div class="driver-info-badge" style="display: <?= ($initial_tab === 'overtime') ? 'inline-flex' : 'none' ?>;">
+                    <span>🚗 <?= htmlspecialchars($driver_info_badge) ?></span>
+                </div>
+            <?php endif; ?>
         </div>
-        <div>
-            <a href="logout.php?type=passenger" class="btn-logout"><?= $lang === 'id' ? 'Keluar' : 'Logout' ?></a>
-        </div>
+        <a href="logout.php?type=passenger" class="btn-logout" title="<?= $lang === 'id' ? 'Keluar' : 'Logout' ?>"><?= $lang === 'id' ? 'Keluar' : 'Logout' ?></a>
     </div>
 
     <div class="container">
@@ -623,8 +959,20 @@ if ($hour >= 4 && $hour < 12) {
             </div>
         <?php endif; ?>
 
-        <!-- Date Range Filter Area -->
-        <div class="filter-section">
+        <!-- Period Info Header Bar -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+            <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                <span style="color: var(--primary-accent); background: var(--primary-light); padding: 4px 8px; border-radius: 6px; border: 1px solid rgba(37,99,235,0.2); font-weight: 700;">
+                    <?= format_date_bilingual($start_date, $lang, 'd M Y') ?> &mdash; <?= format_date_bilingual($end_date, $lang, 'd M Y') ?>
+                </span>
+                <button type="button" id="toggleFilterBtn" onclick="toggleFilterBox()" title="<?= $lang === 'id' ? 'Ubah Tanggal' : 'Change Date' ?>" style="background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); padding: 4px 8px; border-radius: 6px; font-size: 0.85rem; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: var(--card-shadow); transition: all 0.2s;">
+                    ⚙️
+                </button>
+            </div>
+        </div>
+
+        <!-- Date Range Filter Area (HIDDEN BY DEFAULT) -->
+        <div id="filterSectionBox" class="filter-section" style="display: none;">
             <form method="GET" class="filter-form">
                 <div class="filter-group">
                     <span class="filter-label"><?= $lang === 'id' ? 'Tanggal Mulai (Senin)' : 'Start Date (Monday)' ?></span>
@@ -638,130 +986,136 @@ if ($hour >= 4 && $hour < 12) {
             </form>
         </div>
 
-        <!-- Navigation Tabs -->
-        <div class="tab-nav">
-            <?php if ($is_supervisor): ?>
-                <button class="tab-btn active" id="tab-btn-overtime" onclick="switchTab('overtime')"><?= $lang === 'id' ? 'Lembur Driver Saya' : 'My Driver Overtime' ?></button>
-                <button class="tab-btn" id="tab-btn-expenses" onclick="switchTab('expenses')"><?= $lang === 'id' ? 'Biaya Driver Saya' : 'My Driver Expense' ?></button>
-            <?php endif; ?>
-            <button class="tab-btn <?= !$is_supervisor ? 'active' : '' ?>" id="tab-btn-myhistory" onclick="switchTab('myhistory')"><?= $lang === 'id' ? 'Riwayat Saya' : 'My Trip History' ?></button>
-            <button class="tab-btn" id="tab-btn-settings" onclick="switchTab('settings')"><?= $lang === 'id' ? 'Pengaturan' : 'Settings' ?></button>
-        </div>
+        <!-- Navigation Tabs moved to Bottom Navigation Bar -->
 
         <!-- ==================== TAB 1: DRIVER OVERTIME (SUPERVISOR ONLY) ==================== -->
         <?php if ($is_supervisor): ?>
         <div id="tab-content-overtime" class="tab-pane">
             
-            <!-- Overtime Cost Estimator Menu -->
-            <div style="background: rgba(37, 99, 235, 0.05); border: 1px solid rgba(37, 99, 235, 0.15); border-radius: 12px; padding: 16px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: var(--card-shadow);">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 1.5rem;">💸</span>
-                    <div>
-                        <div style="font-weight: 700; color: var(--primary); font-size: 0.9rem;"><?= $lang === 'id' ? 'Estimator Biaya Lembur (Gaji Pokok)' : 'Overtime Cost Estimator (Basic Salary)' ?></div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted);"><?= $lang === 'id' ? 'Rumus standar: (Gaji Pokok / 173) × Jam Lembur Konversi' : 'Standard formula: (Basic Salary / 173) × Converted OT Hours' ?></div>
+            <!-- Overtime Form & Table -->
+            <form action="" method="POST" id="bulkApproveOtForm">
+                <input type="hidden" name="action" value="approve_selected_ot">
+                <input type="hidden" name="start_date" value="<?= $start_date ?>">
+                <input type="hidden" name="end_date" value="<?= $end_date ?>">
+
+                <!-- Table controls (Sort & Actions in 1 single line) -->
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: nowrap; gap: 6px; margin-bottom: 12px; width: 100%;">
+                    <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
+                        <select id="sort-ot" onchange="sortOtTable()" class="filter-input" style="padding: 6px 6px; font-size: 0.75rem; width: auto; max-width: 105px;">
+                            <option value="date_desc">Newest</option>
+                            <option value="date_asc">Oldest</option>
+                            <option value="ot_desc">OT High</option>
+                            <option value="ot_asc">OT Low</option>
+                        </select>
                     </div>
+                    
+                    <?php 
+                    $actionable_ot_shifts = array_filter($supervisor_shifts, function($s) { return $s['approval_status'] !== 'approved' || !empty($s['note_status']); });
+                    if (!empty($supervisor_shifts)): 
+                    ?>
+                        <div style="display: flex; align-items: center; gap: 4px; justify-content: flex-end; flex-shrink: 0;">
+                            <button type="button" onclick="selectAllCheckboxes(true)" class="btn-submit" style="width: auto !important; padding: 6px 8px; font-size: 0.75rem; font-weight: 700; border-radius: 6px; cursor: pointer; white-space: nowrap; background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); box-shadow: var(--card-shadow);">
+                                ☑️ <?= $lang === 'id' ? 'Semua' : 'All' ?>
+                            </button>
+                            <button type="button" onclick="selectAllCheckboxes(false)" class="btn-submit" style="width: auto !important; padding: 6px 8px; font-size: 0.75rem; font-weight: 700; border-radius: 6px; cursor: pointer; white-space: nowrap; background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); box-shadow: var(--card-shadow);">
+                                🔄 Reset
+                            </button>
+                            <button type="button" onclick="submitBulkRejectOt()" class="btn-submit" style="width: auto !important; padding: 6px 10px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: none; white-space: nowrap; background: #dc2626; color: white;">
+                                ❌ <?= $lang === 'id' ? 'Tolak' : 'Not Approve' ?>
+                            </button>
+                            <button type="button" onclick="submitBulkApproveOt()" class="btn-submit" style="width: auto !important; padding: 6px 10px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: none; white-space: nowrap; background: var(--success); color: white;">
+                                ✓ <?= $lang === 'id' ? 'Setujui' : 'Approve' ?>
+                            </button>
+                        </div>
+                    <?php endif; ?>
                 </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-weight: 700; font-size: 0.85rem; color: var(--text-main);">Rp</span>
-                    <input type="number" id="base-salary-input" value="5000000" oninput="recalculateOtCost()" class="filter-input" style="width: 140px; padding: 8px 12px; font-weight: 700; font-size: 0.9rem;">
-                </div>
-            </div>
 
-            <!-- Converted OT Dashboard -->
-            <div class="dashboard-grid">
-                <div class="dashboard-card" style="border-left: 4px solid var(--primary-accent);">
-                    <span class="dashboard-card-label"><?= $lang === 'id' ? 'Total Konversi OT' : 'Total Converted OT' ?></span>
-                    <strong class="dashboard-card-value"><?= (float)$total_conv_ot ?> Hrs</strong>
-                    <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-top: 4px;" id="total-ot-cost">Est: Rp 0</div>
-                </div>
-                <div class="dashboard-card" style="border-left: 4px solid var(--success);">
-                    <span class="dashboard-card-label" style="color: var(--success);"><?= $lang === 'id' ? 'OT Disetujui' : 'OT Approved' ?></span>
-                    <strong class="dashboard-card-value" style="color: var(--success);"><?= (float)$approved_conv_ot ?> Hrs</strong>
-                    <div style="font-size: 0.75rem; font-weight: 700; color: #166534; margin-top: 4px;" id="approved-ot-cost">Est: Rp 0</div>
-                </div>
-                <div class="dashboard-card" style="border-left: 4px solid var(--warning);">
-                    <span class="dashboard-card-label" style="color: var(--warning);"><?= $lang === 'id' ? 'OT Pending' : 'OT Pending' ?></span>
-                    <strong class="dashboard-card-value" style="color: var(--warning);"><?= (float)$pending_conv_ot ?> Hrs</strong>
-                    <div style="font-size: 0.75rem; font-weight: 700; color: #b45309; margin-top: 4px;" id="pending-ot-cost">Est: Rp 0</div>
-                </div>
-            </div>
-
-            <!-- Table controls (Sort) -->
-            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px;">
-                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                    <span class="filter-label" style="margin: 0;"><?= $lang === 'id' ? 'Urutan:' : 'Sort By:' ?></span>
-                    <select id="sort-ot" onchange="sortOtTable()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 140px; margin-right: 8px;">
-                        <option value="date_desc">Date: Newest First</option>
-                        <option value="date_asc">Date: Oldest First</option>
-                        <option value="ot_desc">OT: High to Low</option>
-                        <option value="ot_asc">OT: Low to High</option>
-                    </select>
-                    <button type="button" onclick="exportOtToExcel()" class="btn-submit" style="background: #166534; padding: 8px 12px; font-size: 0.8rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; border: none; box-shadow: none; cursor: pointer;"><?= $lang === 'id' ? 'Ekspor Excel 📊' : 'Export Excel 📊' ?></button>
-                    <button type="button" onclick="exportOtToPdf()" class="btn-submit" style="background: #991b1b; padding: 8px 12px; font-size: 0.8rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; border: none; box-shadow: none; cursor: pointer;"><?= $lang === 'id' ? 'Ekspor PDF 📄' : 'Export PDF 📄' ?></button>
-                </div>
-                
-                <?php 
-                $pending_ot_shifts = array_filter($supervisor_shifts, function($s) { return $s['approval_status'] === 'pending'; });
-                if (count($pending_ot_shifts) > 0): 
-                ?>
-                    <form action="" method="POST" onsubmit="return confirm('<?= $lang === 'id' ? 'Setujui semua lembur yang pending untuk minggu ini?' : 'Approve all pending overtime shifts for this week?' ?>')">
-                        <input type="hidden" name="action" value="approve_all_ot">
-                        <input type="hidden" name="start_date" value="<?= $start_date ?>">
-                        <input type="hidden" name="end_date" value="<?= $end_date ?>">
-                        <button type="submit" class="btn-submit" style="background: var(--success); padding: 8px 16px;"><?= $lang === 'id' ? '✓ Setujui Semua' : '✓ Approve All Pending' ?></button>
-                    </form>
-                <?php endif; ?>
-            </div>
-
-            <!-- Overtime Table -->
-            <div class="data-table-container">
-                <table class="corporate-table" id="otTable">
-                    <thead>
-                        <tr>
-                            <th>Driver</th>
-                            <th>Date</th>
-                            <th>Time (In/Out)</th>
-                            <th>Real OT</th>
-                            <th>Conv. OT</th>
-                            <th><?= $lang === 'id' ? 'Estimasi Biaya' : 'Est. Cost' ?></th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="ot-tbody">
-                        <?php if (empty($supervisor_shifts)): ?>
-                            <tr class="empty-row">
-                                <td colspan="8" align="center" style="padding: 24px; color: var(--text-muted);">
-                                    <?= $lang === 'id' ? 'Tidak ada data lembur driver pada periode ini.' : 'No driver overtime shifts found in this period.' ?>
-                                </td>
+                <!-- Overtime Table -->
+                <div class="data-table-container">
+                    <table class="corporate-table" id="otTable">
+                        <thead>
+                            <tr>
+                                <th style="width: 36px; text-align: center;">
+                                    <input type="checkbox" id="selectAllOt" onclick="toggleSelectAllOt(this)" title="<?= $lang === 'id' ? 'Pilih Semua' : 'Select All' ?>" style="width: 18px; height: 18px; cursor: pointer;">
+                                </th>
+                                <th>Date</th>
+                                <th>Time (In/Out)</th>
+                                <th style="text-align: center; width: 70px;">Status</th>
                             </tr>
-                        <?php else: ?>
-                            <?php foreach ($supervisor_shifts as $s): ?>
-                                <tr class="ot-tr" data-date="<?= $s['shift_date'] ?>" data-ot="<?= floatval($s['conv_ot']) ?>">
-                                    <td><strong><?= htmlspecialchars($s['driver_name']) ?></strong></td>
-                                    <td><?= htmlspecialchars($s['shift_date']) ?></td>
-                                    <td><?= substr($s['start_time'], 0, 5) ?> - <?= $s['end_time'] ? substr($s['end_time'], 0, 5) : '-' ?></td>
-                                    <td><?= (float)$s['real_ot'] ?></td>
-                                    <td><strong><?= (float)$s['conv_ot'] ?></strong></td>
-                                    <td class="ot-cost-cell" data-hours="<?= floatval($s['conv_ot']) ?>">Rp 0</td>
-                                    <td>
-                                        <span class="badge badge-<?= $s['approval_status'] === 'approved' ? 'success' : 'pending' ?>">
-                                            <?= $s['approval_status'] === 'approved' ? ($lang === 'id' ? 'Disetujui' : 'Approved') : ($lang === 'id' ? 'Pending' : 'Pending') ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        <?php if ($s['approval_status'] === 'pending'): ?>
-                                            <button onclick="openApproveOtModal(<?= $s['id'] ?>, '<?= htmlspecialchars($s['driver_name']) ?>', '<?= $s['shift_date'] ?>')" class="btn-submit" style="padding: 4px 8px; font-size: 0.75rem; background: var(--success);"><?= $lang === 'id' ? 'Setujui' : 'Approve' ?></button>
-                                        <?php else: ?>
-                                            <span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">By Spv</span>
-                                        <?php endif; ?>
+                        </thead>
+                        <tbody id="ot-tbody">
+                            <?php if (empty($supervisor_shifts)): ?>
+                                <tr class="empty-row">
+                                    <td colspan="4" align="center" style="padding: 24px; color: var(--text-muted);">
+                                        <?= $lang === 'id' ? 'Tidak ada data lembur driver pada periode ini.' : 'No driver overtime shifts found in this period.' ?>
                                     </td>
                                 </tr>
-                            <?php endforeach; ?>
+                            <?php else: ?>
+                                <?php foreach ($supervisor_shifts as $s): ?>
+                                    <tr class="ot-tr" data-date="<?= $s['shift_date'] ?>" data-ot="<?= floatval($s['conv_ot']) ?>">
+                                        <td align="center">
+                                            <input type="checkbox" class="shift-checkbox" name="selected_shifts[]" value="<?= $s['id'] ?>" data-status="<?= $s['approval_status'] ?>" data-note-status="<?= $s['note_status'] ?? 'none' ?>" style="width: 18px; height: 18px; cursor: pointer;">
+                                        </td>
+                                         <td>
+                                             <?php 
+                                                 $dt = strtotime($s['shift_date']);
+                                                 $formatted_date = format_date_bilingual($s['shift_date'], $lang, 'd M');
+                                                 $day_num = (int)date('N', $dt);
+                                                 $is_weekend = ($day_num === 6 || $day_num === 7);
+                                                 $days_id = [1 => 'Senin', 2 => 'Selasa', 3 => 'Rabu', 4 => 'Kamis', 5 => 'Jumat', 6 => 'Sabtu', 7 => 'Minggu'];
+                                                 $days_en = [1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday', 7 => 'Sunday'];
+                                                 $day_name = ($lang === 'id') ? $days_id[$day_num] : $days_en[$day_num];
+                                             ?>
+                                             <div style="font-weight: 700; color: <?= $is_weekend ? '#ef4444' : 'var(--text-main)' ?>; line-height: 1.2;"><?= $formatted_date ?></div>
+                                             <div style="font-size: 0.72rem; color: <?= $is_weekend ? '#ef4444' : 'var(--text-muted)' ?>; font-weight: <?= $is_weekend ? '700' : '600' ?>; margin-top: 1px;"><?= $day_name ?></div>
+                                         </td>
+                                        <td><?= substr($s['start_time'], 0, 5) ?> - <?= $s['end_time'] ? substr($s['end_time'], 0, 5) : '-' ?></td>
+                                        <td align="center">
+                                            <div style="display: flex; align-items: center; justify-content: center; gap: 4px;">
+                                                <?php if ($s['approval_status'] === 'approved'): ?>
+                                                    <span title="<?= $lang === 'id' ? 'Disetujui' : 'Approved' ?>" style="font-size: 1.1rem; line-height: 1;">✅</span>
+                                                <?php elseif ($s['approval_status'] === 'rejected'): ?>
+                                                    <span title="<?= $lang === 'id' ? 'Belum Disetujui' : 'Not Approved' ?>" style="font-size: 1.1rem; line-height: 1;">❌</span>
+                                                <?php else: ?>
+                                                    <span title="<?= $lang === 'id' ? 'Menunggu Persetujuan' : 'Pending Approval' ?>" style="font-size: 1.1rem; line-height: 1;">⏳</span>
+                                                <?php endif; ?>
+
+                                                <?php if (!empty($s['note_status']) && $s['note_status'] === 'pending_admin'): ?>
+                                                    <button type="button" onclick="openShiftCommentsModal(<?= $s['id'] ?>)" title="<?= $lang === 'id' ? 'Catatan Penumpang (Menunggu Balasan Admin)' : 'Passenger Note (Awaiting Admin Reply)' ?>" style="background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 0; line-height: 1; color: #f59e0b;">
+                                                        💬
+                                                    </button>
+                                                <?php elseif (!empty($s['note_status']) && $s['note_status'] === 'replied_admin'): ?>
+                                                    <button type="button" onclick="openShiftCommentsModal(<?= $s['id'] ?>)" title="<?= $lang === 'id' ? 'Catatan (Telah Dibalas Admin)' : 'Note (Replied by Admin)' ?>" style="background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 0; line-height: 1; color: #10b981;">
+                                                        💬
+                                                    </button>
+                                                <?php elseif (!empty($s['supervisor_note'])): ?>
+                                                    <button type="button" onclick="openShiftCommentsModal(<?= $s['id'] ?>)" title="<?= htmlspecialchars($s['supervisor_note']) ?>" style="background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 0; line-height: 1; color: #64748b;">
+                                                        💬
+                                                    </button>
+                                                <?php endif; ?>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                        <?php if (!empty($supervisor_shifts)): ?>
+                            <tfoot style="background: var(--bg-page); font-weight: 700; border-top: 2px solid var(--border-color);">
+                                <tr>
+                                    <td colspan="3" align="right" style="padding: 10px 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-main); font-size: 0.82rem;">
+                                        TOTAL: <?= count($supervisor_shifts) ?> <?= $lang === 'id' ? 'Hari' : 'Days' ?>
+                                    </td>
+                                    <td align="center" style="padding: 10px 14px; font-size: 0.85rem;">
+                                        <span style="color: var(--success);" title="Approved">✅ <?= count(array_filter($supervisor_shifts, function($s){ return $s['approval_status'] === 'approved'; })) ?></span>
+                                        &nbsp;&bull;&nbsp;
+                                        <span style="color: var(--warning);" title="Pending">⏳ <?= count(array_filter($supervisor_shifts, function($s){ return $s['approval_status'] === 'pending'; })) ?></span>
+                                    </td>
+                                </tr>
+                            </tfoot>
                         <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                    </table>
+                </div>
+            </form>
         </div>
 
         <!-- ==================== TAB 2: DRIVER EXPENSE (SUPERVISOR ONLY) ==================== -->
@@ -799,24 +1153,31 @@ if ($hour >= 4 && $hour < 12) {
             </div>
 
             <!-- Sorting & Search Control -->
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center;">
-                <span class="filter-label"><?= $lang === 'id' ? 'Urutan:' : 'Sort By:' ?></span>
-                <select id="sort-expenses" onchange="sortExpensesTable()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 140px;">
-                    <option value="date_desc">Date: Newest First</option>
-                    <option value="date_asc">Date: Oldest First</option>
-                    <option value="cost_desc">Cost: High to Low</option>
-                    <option value="cost_asc">Cost: Low to High</option>
-                </select>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; justify-content: space-between;">
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; flex: 1;">
+                    <!-- Real-time Search Box -->
+                    <div style="position: relative; min-width: 150px; flex: 1;">
+                        <input type="text" id="search-expenses" onkeyup="filterExpensesTable()" placeholder="<?= $lang === 'id' ? '🔍 Cari TX, Driver, Tujuan...' : '🔍 Search TX, Driver, Dest...' ?>" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: 100%;">
+                    </div>
 
-                <span class="filter-label" style="margin-left: 12px;"><?= $lang === 'id' ? 'Status Cek Admin:' : 'Admin Checked Status:' ?></span>
-                <select id="filter-expense-checked" onchange="filterExpensesTableByChecked()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 160px;">
-                    <option value="all"><?= $lang === 'id' ? 'Semua Status' : 'All Status' ?></option>
-                    <option value="unchecked"><?= $lang === 'id' ? 'Belum Dicek Admin' : 'Unchecked by Admin' ?></option>
-                    <option value="checked"><?= $lang === 'id' ? 'Sudah Dicek Admin' : 'Checked by Admin' ?></option>
-                </select>
+                    <select id="sort-expenses" onchange="sortExpensesTable()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 120px;">
+                        <option value="date_desc">Date: Newest</option>
+                        <option value="date_asc">Date: Oldest</option>
+                        <option value="cost_desc">Cost: High</option>
+                        <option value="cost_asc">Cost: Low</option>
+                    </select>
+
+                    <select id="filter-expense-checked" onchange="filterExpensesTable()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 130px;">
+                        <option value="all"><?= $lang === 'id' ? 'Semua Status' : 'All Status' ?></option>
+                        <option value="unchecked"><?= $lang === 'id' ? 'Belum Dicek' : 'Unchecked' ?></option>
+                        <option value="checked"><?= $lang === 'id' ? 'Sudah Dicek' : 'Checked' ?></option>
+                    </select>
+                </div>
                 
-                <button type="button" onclick="exportExpensesToExcel()" class="btn-submit" style="background: #166534; padding: 8px 12px; font-size: 0.8rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; border: none; box-shadow: none; cursor: pointer; margin-left: 12px;"><?= $lang === 'id' ? 'Ekspor Excel 📊' : 'Export Excel 📊' ?></button>
-                <button type="button" onclick="exportExpensesToPdf()" class="btn-submit" style="background: #991b1b; padding: 8px 12px; font-size: 0.8rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; border: none; box-shadow: none; cursor: pointer;"><?= $lang === 'id' ? 'Ekspor PDF 📄' : 'Export PDF 📄' ?></button>
+                <div class="desktop-only-btn" style="display: inline-flex; gap: 6px; align-items: center; margin-left: auto;">
+                    <button type="button" onclick="exportExpensesToExcel()" class="btn-submit" style="background: #166534; padding: 8px 12px; font-size: 0.8rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; border: none; box-shadow: none; cursor: pointer;"><?= $lang === 'id' ? 'Ekspor Excel 📊' : 'Export Excel 📊' ?></button>
+                    <button type="button" onclick="exportExpensesToPdf()" class="btn-submit" style="background: #991b1b; padding: 8px 12px; font-size: 0.8rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; border: none; box-shadow: none; cursor: pointer;"><?= $lang === 'id' ? 'Ekspor PDF 📄' : 'Export PDF 📄' ?></button>
+                </div>
             </div>
 
             <!-- Driver Expense Table -->
@@ -864,17 +1225,54 @@ if ($hour >= 4 && $hour < 12) {
                                 $rowTotalCost = floatval($r['gas_amt']) + floatval($r['toll_amt']) + floatval($r['lunch_amt']) + floatval($r['others_amt']) + floatval($r['parking_amt']);
                                 ?>
                                 <tr class="expense-tr" data-date="<?= $r['shift_date'] ?>" data-cost="<?= $rowTotalCost ?>" data-checked="<?= $allApproved ? '1' : '0' ?>">
-                                    <td><a href="#" onclick="showTripDetailById(event, <?= $r['id'] ?>)" style="color: var(--primary-accent); text-decoration: underline; font-weight: 700; cursor: pointer;">TX-<?= $r['id'] ?></a></td>
-                                    <td><?= htmlspecialchars($r['driver_name']) ?></td>
-                                    <td><?= htmlspecialchars($r['shift_date']) ?></td>
-                                    <td><?= htmlspecialchars($r['pass_name']) ?></td>
-                                    <td><strong><?= htmlspecialchars($r['dest_name']) ?></strong></td>
-                                    <td><?= $r['gas_amt'] ? 'Rp '.number_format($r['gas_amt']) : '-' ?></td>
-                                    <td><?= $r['toll_amt'] ? 'Rp '.number_format($r['toll_amt']) : '-' ?></td>
-                                    <td><?= ($r['others_amt'] || $r['parking_amt']) ? 'Rp '.number_format(($r['others_amt'] ?: 0) + ($r['parking_amt'] ?: 0)) : '-' ?></td>
-                                    <td><?= $r['lunch_amt'] ? 'Rp '.number_format($r['lunch_amt']) : '-' ?></td>
-                                    <td align="center"><?= $checkedHtml ?></td>
-                                </tr>
+                                     <!-- Desktop Table Cells -->
+                                     <td class="desktop-only-cell" data-label="TX ID"><a href="#" onclick="showTripDetailById(event, <?= $r['id'] ?>)" style="color: var(--primary-accent); text-decoration: underline; font-weight: 700; cursor: pointer;">TX-<?= $r['id'] ?></a></td>
+                                     <td class="desktop-only-cell" data-label="Driver"><?= htmlspecialchars($r['driver_name']) ?></td>
+                                     <td class="desktop-only-cell" data-label="Date"><?= format_date_bilingual($r['shift_date'], $lang, 'd M Y') ?></td>
+                                     <td class="desktop-only-cell" data-label="Passenger"><?= htmlspecialchars($r['pass_name']) ?></td>
+                                     <td class="desktop-only-cell" data-label="Destination"><strong><?= htmlspecialchars($r['dest_name']) ?></strong></td>
+                                     <td class="desktop-only-cell" data-label="Gasoline"><?= $r['gas_amt'] ? 'Rp '.number_format($r['gas_amt']) : '-' ?></td>
+                                     <td class="desktop-only-cell" data-label="Toll"><?= $r['toll_amt'] ? 'Rp '.number_format($r['toll_amt']) : '-' ?></td>
+                                     <td class="desktop-only-cell" data-label="Others"><?= ($r['others_amt'] || $r['parking_amt']) ? 'Rp '.number_format(($r['others_amt'] ?: 0) + ($r['parking_amt'] ?: 0)) : '-' ?></td>
+                                     <td class="desktop-only-cell" data-label="Lunch"><?= $r['lunch_amt'] ? 'Rp '.number_format($r['lunch_amt']) : '-' ?></td>
+                                     <td class="desktop-only-cell" data-label="Checked" align="center"><?= $checkedHtml ?></td>
+
+                                     <!-- Mobile Compact Card Cell -->
+                                     <td class="mobile-only-cell" style="padding: 0; border: none;">
+                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                             <div>
+                                                 <a href="#" onclick="showTripDetailById(event, <?= $r['id'] ?>)" style="color: var(--primary-accent); font-weight: 800; font-size: 0.9rem;">TX-<?= $r['id'] ?></a>
+                                                 <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 6px; font-weight: 600;"><?= format_date_bilingual($r['shift_date'], $lang, 'd M Y') ?></span>
+                                             </div>
+                                             <div style="display: flex; align-items: center; gap: 6px;">
+                                                 <strong style="font-size: 0.92rem; color: var(--primary-accent);">Rp <?= number_format($rowTotalCost) ?></strong>
+                                                 <span><?= $checkedHtml ?></span>
+                                             </div>
+                                         </div>
+                                         <div style="font-size: 0.8rem; color: var(--text-main); font-weight: 700; margin-bottom: 3px;">
+                                             📍 <?= htmlspecialchars($r['dest_name']) ?>
+                                         </div>
+                                         <div style="font-size: 0.73rem; color: var(--text-muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; font-weight: 600;">
+                                             <span>🚗 <?= htmlspecialchars($r['driver_name']) ?></span>
+                                             <span>👤 <?= htmlspecialchars($r['pass_name']) ?></span>
+                                         </div>
+                                         <!-- Active Expense Badges -->
+                                         <div style="display: flex; gap: 4px; flex-wrap: wrap; font-size: 0.7rem; font-weight: 700;">
+                                             <?php if ($r['gas_amt']): ?>
+                                                 <span style="background: #fef3c7; color: #b45309; padding: 2px 6px; border-radius: 4px;">⛽ BBM: Rp <?= number_format($r['gas_amt']) ?></span>
+                                             <?php endif; ?>
+                                             <?php if ($r['toll_amt']): ?>
+                                                 <span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px;">🛣️ Toll: Rp <?= number_format($r['toll_amt']) ?></span>
+                                             <?php endif; ?>
+                                             <?php if ($r['lunch_amt']): ?>
+                                                 <span style="background: #dcfce7; color: #15803d; padding: 2px 6px; border-radius: 4px;">🍱 Makan: Rp <?= number_format($r['lunch_amt']) ?></span>
+                                             <?php endif; ?>
+                                             <?php if ($r['others_amt'] || $r['parking_amt']): ?>
+                                                 <span style="background: #f3e8ff; color: #6b21a8; padding: 2px 6px; border-radius: 4px;">🅿️ Lainnya: Rp <?= number_format(($r['others_amt'] ?: 0) + ($r['parking_amt'] ?: 0)) ?></span>
+                                             <?php endif; ?>
+                                         </div>
+                                     </td>
+                                 </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>
                     </tbody>
@@ -1081,19 +1479,51 @@ if ($hour >= 4 && $hour < 12) {
         </div>
     </div>
 
+    <!-- Shift Discussion / Comments Modal -->
+    <div id="shiftCommentsModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px; border-radius: 16px; padding: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; margin-bottom: 16px;">
+                <h3 style="margin: 0; font-size: 1.1rem; color: var(--primary); font-family: 'Outfit', sans-serif;" id="commentsModalTitle">
+                    💬 <?= $lang === 'id' ? 'Catatan & Percakapan' : 'Notes & Discussion' ?>
+                </h3>
+                <button type="button" onclick="closeShiftCommentsModal()" style="background: none; border: none; font-size: 1.5rem; font-weight: bold; cursor: pointer; color: var(--text-muted);">&times;</button>
+            </div>
+
+            <div id="commentsContainer" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; padding-right: 4px;">
+                <!-- Rendered dynamically -->
+            </div>
+
+            <form id="addCommentForm" onsubmit="submitShiftComment(event)">
+                <input type="hidden" name="action" value="add_shift_comment">
+                <input type="hidden" name="shift_id" id="commentShiftId">
+                <div style="display: flex; gap: 8px;">
+                    <input type="text" name="comment" id="commentInputText" class="form-input" placeholder="<?= $lang === 'id' ? 'Tulis catatan / balasan...' : 'Type a note or reply...' ?>" required style="flex: 1; padding: 10px 12px; font-size: 0.85rem;">
+                    <button type="submit" class="btn-submit" style="padding: 10px 16px; font-size: 0.85rem; border-radius: 8px; font-weight: 700; background: var(--primary-accent); border: none; color: white; cursor: pointer;">
+                        <?= $lang === 'id' ? 'Kirim' : 'Send' ?>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const supervisorExpensesData = <?= json_encode($supervisor_expenses) ?>;
 
         // Switch between tabs
         function switchTab(tabId) {
             document.querySelectorAll('.tab-pane').forEach(el => el.style.display = 'none');
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.bottom-nav-item').forEach(btn => btn.classList.remove('active'));
             
             const targetPane = document.getElementById('tab-content-' + tabId);
             if (targetPane) targetPane.style.display = 'block';
             
             const targetBtn = document.getElementById('tab-btn-' + tabId);
             if (targetBtn) targetBtn.classList.add('active');
+
+            const driverBadge = document.querySelector('.driver-info-badge');
+            if (driverBadge) {
+                driverBadge.style.display = (tabId === 'overtime') ? 'inline-flex' : 'none';
+            }
         }
 
         // Open Overtime Approval Modal
@@ -1106,6 +1536,206 @@ if ($hour >= 4 && $hour < 12) {
 
         function closeApproveOtModal() {
             document.getElementById('approveOtModal').style.display = 'none';
+        }
+
+        function selectAllCheckboxes(checkedState) {
+            document.querySelectorAll('.shift-checkbox').forEach(cb => cb.checked = checkedState);
+            const master = document.getElementById('selectAllOt');
+            if (master) master.checked = checkedState;
+        }
+
+        function toggleSelectAllOt(master) {
+            document.querySelectorAll('.shift-checkbox').forEach(cb => cb.checked = master.checked);
+        }
+
+        function submitBulkApproveOt() {
+            const checked = document.querySelectorAll('.shift-checkbox:checked');
+            const isId = "<?= $lang ?>" === 'id';
+            if (checked.length === 0) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: isId ? 'Pilih Lembur' : 'Select Overtime',
+                    text: isId ? 'Silakan centang minimal satu lembur yang ingin disetujui.' : 'Please select at least one overtime shift to approve.'
+                });
+                return;
+            }
+
+            let hasRejectedOrNote = false;
+            checked.forEach(cb => {
+                const status = cb.getAttribute('data-status');
+                const noteStatus = cb.getAttribute('data-note-status');
+                if (status === 'rejected' || (noteStatus && noteStatus !== 'none')) {
+                    hasRejectedOrNote = true;
+                }
+            });
+
+            let confirmTitle = isId ? 'Setujui Lembur Terpilih?' : 'Approve Selected Overtime?';
+            let confirmText = isId ? `Anda akan menyetujui ${checked.length} lembur driver terpilih.` : `You are about to approve ${checked.length} selected driver shift(s).`;
+
+            if (hasRejectedOrNote) {
+                confirmTitle = isId ? 'Konfirmasi Persetujuan (Belum Disetujui / Diberi Catatan)' : 'Approval Confirmation (Previously Not Approved / Noted)';
+                confirmText = isId ? 
+                    `Terdapat shift terpilih yang sebelumnya Belum Disetujui atau memiliki Catatan (Note). Apakah Anda yakin ingin tetap menyetujui (${checked.length} shift)?` : 
+                    `Some selected shifts were previously Not Approved or contain Notes. Are you sure you want to approve them (${checked.length} shift(s))?`;
+            }
+
+            Swal.fire({
+                title: confirmTitle,
+                text: confirmText,
+                icon: hasRejectedOrNote ? 'warning' : 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#16a34a',
+                confirmButtonText: isId ? 'Ya, Setujui!' : 'Yes, Approve!',
+                cancelButtonText: isId ? 'Batal' : 'Cancel'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    const form = document.getElementById('bulkApproveOtForm');
+                    form.action = 'passenger_dashboard.php';
+                    form.querySelector('input[name="action"]').value = 'approve_selected_ot';
+                    form.submit();
+                }
+            });
+        }
+
+        function submitBulkRejectOt() {
+            const checked = document.querySelectorAll('.shift-checkbox:checked');
+            const isId = "<?= $lang ?>" === 'id';
+            if (checked.length === 0) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: isId ? 'Pilih Lembur' : 'Select Overtime',
+                    text: isId ? 'Silakan centang minimal satu lembur yang ingin diproses.' : 'Please select at least one overtime shift.'
+                });
+                return;
+            }
+
+            Swal.fire({
+                title: isId ? 'Tanda Belum Disetujui (Not Approve)?' : 'Mark as Not Approve?',
+                text: isId ? `Silakan masukkan alasan/catatan untuk ${checked.length} shift terpilih:` : `Please enter the reason/note for marking ${checked.length} shift(s) as Not Approve:`,
+                input: 'textarea',
+                inputPlaceholder: isId ? 'Tuliskan alasan tidak disetujui di sini...' : 'Enter reason for Not Approve here...',
+                inputAttributes: {
+                    autocapitalize: 'off'
+                },
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#dc2626',
+                confirmButtonText: isId ? 'Ya, Not Approve!' : 'Yes, Not Approve!',
+                cancelButtonText: isId ? 'Batal' : 'Cancel',
+                inputValidator: (value) => {
+                    if (!value || !value.trim()) {
+                        return isId ? 'Alasan tidak boleh kosong!' : 'Reason cannot be empty!';
+                    }
+                }
+            }).then((result) => {
+                if (result.isConfirmed && result.value) {
+                    const form = document.getElementById('bulkApproveOtForm');
+                    form.action = 'passenger_dashboard.php';
+                    form.querySelector('input[name="action"]').value = 'reject_selected_ot';
+                    
+                    let reasonInput = form.querySelector('input[name="rejection_reason"]');
+                    if (!reasonInput) {
+                        reasonInput = document.createElement('input');
+                        reasonInput.type = 'hidden';
+                        reasonInput.name = 'rejection_reason';
+                        form.appendChild(reasonInput);
+                    }
+                    reasonInput.value = result.value.trim();
+                    form.submit();
+                }
+            });
+        }
+
+        // Shift Comments Modal Functions
+        function openShiftCommentsModal(shiftId) {
+            document.getElementById('commentShiftId').value = shiftId;
+            document.getElementById('commentInputText').value = '';
+            const container = document.getElementById('commentsContainer');
+            container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 16px;">Loading...</div>';
+            document.getElementById('shiftCommentsModal').style.display = 'block';
+
+            const formData = new FormData();
+            formData.append('action', 'get_shift_comments');
+            formData.append('shift_id', shiftId);
+
+            fetch('passenger_dashboard.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(res => {
+                if (res.success) {
+                    document.getElementById('commentsModalTitle').innerText = `💬 ${res.shift.driver_name} (${res.shift.shift_date})`;
+                    renderComments(res.comments);
+                } else {
+                    container.innerHTML = '<div style="color: #dc2626; padding: 12px;">Failed to load comments.</div>';
+                }
+            })
+            .catch(err => {
+                container.innerHTML = '<div style="color: #dc2626; padding: 12px;">Network error.</div>';
+            });
+        }
+
+        function closeShiftCommentsModal() {
+            document.getElementById('shiftCommentsModal').style.display = 'none';
+        }
+
+        function renderComments(comments) {
+            const container = document.getElementById('commentsContainer');
+            const isId = "<?= $lang ?>" === 'id';
+            if (!comments || comments.length === 0) {
+                container.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 20px; font-size: 0.85rem;">${isId ? 'Belum ada catatan untuk shift ini.' : 'No notes found for this shift.'}</div>`;
+                return;
+            }
+
+            container.innerHTML = comments.map(c => {
+                const isAdmin = c.user_type === 'admin';
+                const bg = isAdmin ? '#f0fdf4' : '#eff6ff';
+                const border = isAdmin ? '#bbf7d0' : '#bfdbfe';
+                const badgeColor = isAdmin ? '#166534' : '#1e40af';
+                const badgeText = isAdmin ? 'Admin' : (isId ? 'Penumpang' : 'Passenger');
+                
+                return `
+                    <div style="background: ${bg}; border: 1px solid ${border}; border-radius: 10px; padding: 10px 12px; font-size: 0.82rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                            <span style="font-weight: 700; color: ${badgeColor}; display: inline-flex; align-items: center; gap: 4px;">
+                                ${isAdmin ? '🛡️' : '👤'} ${escapeHtml(c.user_name)} <small style="font-weight: 600; opacity: 0.8;">(${badgeText})</small>
+                            </span>
+                            <span style="font-size: 0.7rem; color: var(--text-muted);">${c.created_at}</span>
+                        </div>
+                        <div style="color: var(--text-main); line-height: 1.4; word-break: break-word;">${escapeHtml(c.comment)}</div>
+                    </div>
+                `;
+            }).join('');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        }
+
+        function submitShiftComment(e) {
+            e.preventDefault();
+            const form = document.getElementById('addCommentForm');
+            const data = new FormData(form);
+
+            fetch('passenger_dashboard.php', {
+                method: 'POST',
+                body: data
+            })
+            .then(res => res.json())
+            .then(res => {
+                if (res.success) {
+                    const shiftId = document.getElementById('commentShiftId').value;
+                    openShiftCommentsModal(shiftId);
+                } else {
+                    alert(res.error || 'Failed to send comment.');
+                }
+            })
+            .catch(err => {
+                alert('Network error.');
+            });
         }
 
         // Submit Overtime Approval via Ajax
@@ -1192,6 +1822,7 @@ if ($hour >= 4 && $hour < 12) {
             });
 
             rows.forEach(r => tbody.appendChild(r));
+            filterExpensesTable();
         }
 
         function sortMyTripsList() {
@@ -1217,22 +1848,35 @@ if ($hour >= 4 && $hour < 12) {
             cards.forEach(c => container.appendChild(c));
         }
 
-        function filterExpensesTableByChecked() {
-            const status = document.getElementById('filter-expense-checked').value;
+        function filterExpensesTable() {
+            const query = (document.getElementById('search-expenses')?.value || '').toLowerCase().trim();
+            const status = document.getElementById('filter-expense-checked')?.value || 'all';
             const tbody = document.getElementById('expenses-tbody');
             if (!tbody) return;
             const rows = Array.from(tbody.querySelectorAll('tr.expense-tr'));
             
             rows.forEach(row => {
+                const text = row.innerText.toLowerCase();
                 const isChecked = row.getAttribute('data-checked') === '1';
-                if (status === 'all') {
-                    row.style.display = '';
-                } else if (status === 'unchecked') {
-                    row.style.display = !isChecked ? '' : 'none';
+                
+                const matchesQuery = !query || text.includes(query);
+                let matchesStatus = true;
+                if (status === 'unchecked') {
+                    matchesStatus = !isChecked;
                 } else if (status === 'checked') {
-                    row.style.display = isChecked ? '' : 'none';
+                    matchesStatus = isChecked;
+                }
+                
+                if (matchesQuery && matchesStatus) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
                 }
             });
+        }
+
+        function filterExpensesTableByChecked() {
+            filterExpensesTable();
         }
 
         function recalculateOtCost() {
@@ -1277,6 +1921,19 @@ if ($hour >= 4 && $hour < 12) {
             });
             const wb = XLSX.utils.table_to_book(clonedTable, {sheet: "Overtime"});
             XLSX.writeFile(wb, "Driver_Overtime_Report_" + new Date().toISOString().slice(0,10) + ".xlsx");
+        }
+
+        function toggleFilterBox() {
+            const box = document.getElementById('filterSectionBox');
+            const btnText = document.getElementById('toggleFilterText');
+            const isId = "<?= $lang ?>" === 'id';
+            if (box.style.display === 'none' || !box.style.display) {
+                box.style.display = 'block';
+                btnText.innerText = isId ? 'Sembunyikan Parameter' : 'Hide Parameter';
+            } else {
+                box.style.display = 'none';
+                btnText.innerText = isId ? 'Ubah Tanggal' : 'Change Date';
+            }
         }
 
         function exportOtToPdf() {
@@ -1480,5 +2137,27 @@ if ($hour >= 4 && $hour < 12) {
             }
         });
     </script>
+    <!-- Fixed Bottom Navigation Bar -->
+    <div class="bottom-nav">
+        <?php if ($is_supervisor): ?>
+            <button class="bottom-nav-item active" id="tab-btn-overtime" onclick="switchTab('overtime')">
+                <span class="bottom-nav-icon">⏱️</span>
+                <span><?= $lang === 'id' ? 'Lembur' : 'Overtime' ?></span>
+            </button>
+            <button class="bottom-nav-item" id="tab-btn-expenses" onclick="switchTab('expenses')">
+                <span class="bottom-nav-icon">💸</span>
+                <span><?= $lang === 'id' ? 'Biaya Driver' : 'Expenses' ?></span>
+            </button>
+        <?php endif; ?>
+        <button class="bottom-nav-item <?= !$is_supervisor ? 'active' : '' ?>" id="tab-btn-myhistory" onclick="switchTab('myhistory')">
+            <span class="bottom-nav-icon">📜</span>
+            <span><?= $lang === 'id' ? 'Riwayat' : 'My History' ?></span>
+        </button>
+        <button class="bottom-nav-item" id="tab-btn-settings" onclick="switchTab('settings')">
+            <span class="bottom-nav-icon">⚙️</span>
+            <span><?= $lang === 'id' ? 'Pengaturan' : 'Settings' ?></span>
+        </button>
+    </div>
+
 </body>
 </html>

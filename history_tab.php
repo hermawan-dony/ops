@@ -126,25 +126,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 <div class="form-group searchable-select" style="margin-bottom: 12px; position: relative;">
                     <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">${lang === 'id' ? 'Tujuan' : 'Destination'}</label>
-                    <input type="text" id="modal_dest_search" class="dest-search-input" value="${t.dest_name || ''}" placeholder="${lang === 'id' ? 'Cari/Tambah Tujuan...' : 'Search/Add Destination...'}" autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                    <input type="text" name="destination_name" id="modal_dest_search" class="dest-search-input" value="${escapeHtml(t.dest_name || '')}" placeholder="${lang === 'id' ? 'Cari/Tambah Tujuan...' : 'Search/Add Destination...'}" autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                     <input type="hidden" name="destination_id" id="modal_dest_id_hidden" value="${t.destination_id || ''}">
-                    <input type="text" name="new_destination" id="modal_new_dest_input" placeholder="${lang === 'id' ? 'Nama Tujuan Baru' : 'New Destination Name'}" style="display:none; margin-top: 10px; width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                     <div id="modal_dest_results" class="search-results"></div>
                 </div>
 
                 <div class="form-group searchable-select" style="margin-bottom: 12px; position: relative;">
                     <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">${lang === 'id' ? 'Penumpang' : 'Passenger'}</label>
-                    <input type="text" id="modal_pass_search" class="pass-search-input" value="${t.pass_name || ''}" placeholder="${lang === 'id' ? 'Cari/Tambah Penumpang...' : 'Search/Add Passenger...'}" autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                    <input type="text" name="passenger_name" id="modal_pass_search" class="pass-search-input" value="${escapeHtml(t.pass_name || '')}" placeholder="${lang === 'id' ? 'Cari/Tambah Penumpang...' : 'Search/Add Passenger...'}" autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                     <input type="hidden" name="passenger_id" id="modal_pass_id_hidden" value="${t.passenger_id || ''}">
-                    <input type="text" name="new_passenger" id="modal_new_pass_input" placeholder="${lang === 'id' ? 'Nama Penumpang Baru' : 'New Passenger Name'}" style="display:none; margin-top: 10px; width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                     <div id="modal_pass_results" class="search-results"></div>
                 </div>
 
                 <div class="form-group" style="margin-bottom: 12px;">
                     <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">${lang === 'id' ? 'Mobil' : 'Car'}</label>
-                    <select name="car_id" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
-                        ${cars.map(c => `<option value="${c.id}" ${c.id == t.car_id ? 'selected' : ''}>${c.car_no}</option>`).join('')}
-                    </select>
+                    <input type="text" name="car_no" value="${escapeHtml(t.car_no || '')}" placeholder="Nomor Mobil" required style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                 </div>
 
                 <div class="form-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px;">
@@ -435,15 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <button onclick="toggleForm('history_edit_trip_form_${t.id}', this)" class="btn" style="background: rgba(16, 185, 129, 0.1); color: var(--success-color); border: 1px solid var(--success-color); padding: 6px 12px; font-size: 0.8rem; border-radius: 8px; margin-bottom: 0; flex: 1;">✏️ <?= __('edit_trip') ?> <span class="arrow-indicator">▼</span></button>
                                 <button onclick="toggleForm('${formId}', this)" class="btn" style="background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid #d97706; padding: 6px 12px; font-size: 0.8rem; border-radius: 8px; margin-bottom: 0; flex: 1;">➕ <?= __('add_expense') ?> <span class="arrow-indicator">▼</span></button>
                             </div>
-                            ${(t.passenger_approval === 'pending' && t.pass_name !== '?' && t.pass_name) ? `
-                            <form action="manage_trip.php" method="POST" onsubmit="showSendWALoader()" style="margin-top: 8px; margin-bottom: 0; display: block; width: 100%;">
-                                <input type="hidden" name="action" value="send_wa_request">
-                                <input type="hidden" name="trip_id" value="${t.id}">
-                                <button type="submit" class="btn" style="background: #2563eb; color: white; padding: 10px; font-size: 0.85rem; border-radius: 8px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px; font-weight: 700; margin-bottom: 0;">
-                                    💬 ${lang === 'id' ? 'Kirim Request Persetujuan' : 'Send Approval Request'}
-                                </button>
-                            </form>
-                            ` : ''}
+
 
                             ${(t.passenger_approval === 'pending' && (!t.expenses || t.expenses.length === 0) && (t.dest_name === '?' || !t.dest_name)) ? `
                             <form action="manage_trip.php" id="history_delete_trip_form_${t.id}" method="POST" style="margin-top: 8px; margin-bottom: 0; display: block; width: 100%;">
@@ -495,15 +483,14 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <input type="text" style="position:absolute; left:-9999px; width:1px; height:1px;" tabindex="-1">
                                     <div class="form-group searchable-select" style="margin-bottom: 8px; position: relative;">
                                         <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Tujuan</label>
-                                        <input type="text" id="edit_dest_search_${t.id}" class="dest-search-input" value="${t.dest_name || ''}" placeholder="Cari atau Tambah Tujuan..." autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                                        <input type="text" name="destination_name" id="edit_dest_search_${t.id}" class="dest-search-input" value="${escapeHtml(t.dest_name || '')}" placeholder="Cari atau Tambah Tujuan..." autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                                         <input type="hidden" name="destination_id" id="edit_dest_id_hidden_${t.id}" value="${t.destination_id || ''}">
-                                        <input type="text" name="new_destination" id="edit_new_dest_input_${t.id}" placeholder="Nama Tujuan Baru" style="display:none; margin-top: 10px; width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                                         <div id="edit_dest_results_${t.id}" class="search-results"></div>
                                     </div>
 
                                     <div class="form-group searchable-select" style="margin-bottom: 8px; position: relative;">
                                         <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Penumpang</label>
-                                        <input type="text" id="edit_pass_search_${t.id}" class="pass-search-input" value="${t.pass_name || ''}" placeholder="Cari User..." autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                                        <input type="text" name="passenger_name" id="edit_pass_search_${t.id}" class="pass-search-input" value="${escapeHtml(t.pass_name || '')}" placeholder="Cari User..." autocomplete="off" style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                                         <input type="hidden" name="passenger_id" id="edit_pass_id_hidden_${t.id}" value="${t.passenger_id || ''}">
                                         <div id="edit_pass_results_${t.id}" class="search-results"></div>
                                     </div>
@@ -511,9 +498,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                                         <div class="form-group" style="margin-bottom: 8px; grid-column: span 2;">
                                             <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Mobil</label>
-                                            <select name="car_id" required style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
-                                                ${cars.map(c => '<option value="' + c.id + '"' + (t.car_id == c.id ? ' selected' : '') + '>' + c.car_no + '</option>').join('')}
-                                            </select>
+                                            <input type="text" name="car_no" value="${escapeHtml(t.car_no || '')}" placeholder="Nomor Mobil" required style="width: 100%; padding: 8px; font-size: 0.85rem; border-radius: 6px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
                                         </div>
                                         <div class="form-group" style="margin-bottom: 8px;">
                                             <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">KM Awal</label>
@@ -657,14 +642,6 @@ document.addEventListener('DOMContentLoaded', () => {
                                                 <button onclick="openEditTripModal(${t.id})" class="btn" style="background: rgba(16, 185, 129, 0.1); color: var(--success-color); border: 1px solid var(--success-color); padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; margin: 0; white-space: nowrap; width: 100%;">✏️ Edit</button>
                                                 <button onclick="openAddExpenseModal(${t.id})" class="btn" style="background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid #d97706; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; margin: 0; white-space: nowrap; width: 100%;">➕ ${lang === 'id' ? 'Biaya' : 'Cost'}</button>
                                                 
-                                                ${(t.passenger_approval === 'pending' && t.pass_name !== '?' && t.pass_name) ? `
-                                                <form action="manage_trip.php" method="POST" onsubmit="showSendWALoader()" style="margin: 0; display: block; width: 100%;">
-                                                    <input type="hidden" name="action" value="send_wa_request">
-                                                    <input type="hidden" name="trip_id" value="${t.id}">
-                                                    <button type="submit" class="btn" style="background: #2563eb; color: white; padding: 4px 8px; font-size: 0.75rem; border-radius: 6px; margin: 0; white-space: nowrap; width: 100%;">💬 WA</button>
-                                                </form>
-                                                ` : ''}
-
                                                 ${(t.passenger_approval === 'pending' && (!t.expenses || t.expenses.length === 0) && (t.dest_name === '?' || !t.dest_name)) ? `
                                                 <form action="manage_trip.php" id="history_delete_trip_form_${t.id}" method="POST" style="margin: 0; display: block; width: 100%;">
                                                     <input type="hidden" name="action" value="delete_trip">

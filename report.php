@@ -16,24 +16,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt = $pdo->prepare("UPDATE trips SET start_time = ?, end_time = ? WHERE id = ?");
         $stmt->execute([$start_time, $end_time, $trip_id]);
         
-        // 2. Process expenses if submitted
+        // 2. Process existing expenses if submitted
         $expense_types = $_POST['expense_type'] ?? [];
         $expense_amounts = $_POST['expense_amount'] ?? [];
         $expense_litres = $_POST['expense_litre'] ?? [];
         $expense_notes = $_POST['expense_note'] ?? [];
         $expense_approved = $_POST['expense_approved'] ?? [];
+        $expense_delete = $_POST['expense_delete'] ?? [];
         
-        // Load all expenses for this trip to see if they are all approved
+        // Load all expenses for this trip
         $stmt_check_exp = $pdo->prepare("SELECT id FROM trip_expenses WHERE trip_id = ?");
         $stmt_check_exp->execute([$trip_id]);
         $all_expenses = $stmt_check_exp->fetchAll(PDO::FETCH_ASSOC);
         
-        $total_expenses_count = count($all_expenses);
-        $approved_count = 0;
-        
         foreach ($all_expenses as $exp) {
             $exp_id = $exp['id'];
-            if (isset($expense_types[$exp_id])) {
+            if (isset($expense_delete[$exp_id]) && $expense_delete[$exp_id] == '1') {
+                // Delete existing expense
+                $stmt_del = $pdo->prepare("DELETE FROM trip_expenses WHERE id = ?");
+                $stmt_del->execute([$exp_id]);
+            } elseif (isset($expense_types[$exp_id])) {
                 $type = $expense_types[$exp_id];
                 $amt = floatval($expense_amounts[$exp_id] ?? 0);
                 $lit = ($type === 'gasoline') ? floatval($expense_litres[$exp_id] ?? null) : null;
@@ -43,10 +45,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $approved_by = isset($expense_approved[$exp_id]) ? 'Admin' : null;
                 $approved_at = isset($expense_approved[$exp_id]) ? date('Y-m-d H:i:s') : null;
                 
-                if ($status === 'approved') {
-                    $approved_count++;
-                }
-                
                 $stmt_up = $pdo->prepare("UPDATE trip_expenses 
                                           SET expense_type = ?, amount = ?, litre = ?, supervisor_note = ?, 
                                               approval_status = ?, approved_by_name = ?, approved_at = ? 
@@ -54,8 +52,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 $stmt_up->execute([$type, $amt, $lit, $note, $status, $approved_by, $approved_at, $exp_id]);
             }
         }
+
+        // 3. Process NEW expenses added by Admin in modal
+        $new_types = $_POST['new_expense_type'] ?? [];
+        $new_amounts = $_POST['new_expense_amount'] ?? [];
+        $new_litres = $_POST['new_expense_litre'] ?? [];
+        $new_notes = $_POST['new_expense_note'] ?? [];
+        $new_approved = $_POST['new_expense_approved'] ?? [];
+
+        for ($i = 0; $i < count($new_types); $i++) {
+            $type = $new_types[$i];
+            $amt = floatval($new_amounts[$i] ?? 0);
+            if ($amt > 0) {
+                $lit = ($type === 'gasoline' && isset($new_litres[$i]) && $new_litres[$i] !== '') ? floatval($new_litres[$i]) : null;
+                $note = $new_notes[$i] ?? '';
+                $status = (isset($new_approved[$i]) && $new_approved[$i] == '1') ? 'approved' : 'pending';
+                $approved_by = ($status === 'approved') ? 'Admin' : null;
+                $approved_at = ($status === 'approved') ? date('Y-m-d H:i:s') : null;
+
+                $stmt_ins = $pdo->prepare("INSERT INTO trip_expenses (trip_id, expense_type, amount, litre, supervisor_note, approval_status, approved_by_name, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $stmt_ins->execute([$trip_id, $type, $amt, $lit, $note, $status, $approved_by, $approved_at]);
+            }
+        }
         
-        // 3. Set passenger_approval to 'approved' if all expenses are approved (or if there are no expenses at all)
+        // 4. Set passenger_approval to 'approved' if all expenses are approved (or if there are no expenses at all)
+        $stmt_check_exp = $pdo->prepare("SELECT id, approval_status FROM trip_expenses WHERE trip_id = ?");
+        $stmt_check_exp->execute([$trip_id]);
+        $current_expenses = $stmt_check_exp->fetchAll(PDO::FETCH_ASSOC);
+
+        $total_expenses_count = count($current_expenses);
+        $approved_count = 0;
+        foreach ($current_expenses as $ce) {
+            if ($ce['approval_status'] === 'approved') $approved_count++;
+        }
+
         $trip_status = ($approved_count === $total_expenses_count) ? 'approved' : 'pending';
         $trip_feedback = ($approved_count === $total_expenses_count) ? 'Approved by Admin' : '';
         
@@ -63,6 +93,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $stmt_trip_up->execute([$trip_status, $trip_feedback, $trip_id]);
         
         header("Location: report.php?msg=" . urlencode("Trip TX-{$trip_id} and expenses updated successfully"));
+        exit;
+    } elseif ($_POST['action'] === 'add_expense_ajax') {
+        header('Content-Type: application/json');
+        try {
+            $trip_id      = intval($_POST['trip_id']);
+            $expense_type = $_POST['expense_type'];
+            $amount       = floatval($_POST['amount']);
+            $litre        = isset($_POST['litre']) && $_POST['litre'] !== '' ? floatval($_POST['litre']) : null;
+            $note         = $_POST['note'] ?? '';
+            $approved     = isset($_POST['approved']) && $_POST['approved'] === '1';
+            $status       = $approved ? 'approved' : 'pending';
+            $approved_by  = $approved ? 'Admin' : null;
+            $approved_at  = $approved ? date('Y-m-d H:i:s') : null;
+
+            $stmt = $pdo->prepare("INSERT INTO trip_expenses (trip_id, expense_type, amount, litre, supervisor_note, approval_status, approved_by_name, approved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$trip_id, $expense_type, $amount, $litre, $note, $status, $approved_by, $approved_at]);
+            $new_id = $pdo->lastInsertId();
+
+            // Recalculate trip approval
+            $counts = $pdo->prepare("SELECT COUNT(*) as total,
+                SUM(CASE WHEN approval_status='approved' THEN 1 ELSE 0 END) as approved_cnt
+                FROM trip_expenses WHERE trip_id=?");
+            $counts->execute([$trip_id]);
+            $c = $counts->fetch();
+            $trip_status = ($c['approved_cnt'] >= $c['total']) ? 'approved' : 'pending';
+            $pdo->prepare("UPDATE trips SET passenger_approval=? WHERE id=?")->execute([$trip_status, $trip_id]);
+
+            echo json_encode(['success' => true, 'expense_id' => $new_id, 'trip_id' => $trip_id, 'amount' => $amount, 'expense_type' => $expense_type, 'litre' => $litre, 'approval_status' => $status]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
         exit;
     } elseif ($_POST['action'] === 'edit_expense_ajax') {
         header('Content-Type: application/json');
@@ -235,7 +296,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             // Delete trip record
             $pdo->prepare("DELETE FROM trips WHERE id = ?")->execute([$trip_id]);
             
-            header("Location: report.php?msg=" . urlencode("Trip TX-{$trip_id} successfully deleted from system"));
+            $msg = "Trip TX-{$trip_id} successfully deleted from system";
+            if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest' || (isset($_POST['is_ajax']) && $_POST['is_ajax'] == '1')) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true, 'msg' => $msg]);
+                exit;
+            }
+
+            header("Location: report.php?msg=" . urlencode($msg));
             exit;
         }
     }
@@ -499,7 +567,7 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 <h3 id="editTripModalTitle" style="margin:0;">Edit Trip Transaction</h3>
                 <button onclick="closeEditTripModal()" style="background:none; border:none; cursor:pointer; font-size:1.5rem; color:var(--text-muted);">&times;</button>
             </div>
-            <form id="editTripForm" method="POST" action="report.php">
+            <form id="editTripForm" action="javascript:void(0);" onsubmit="saveTripAdminForm(event); return false;">
                 <input type="hidden" name="action" value="edit_trip_admin">
                 <input type="hidden" name="trip_id" id="edit_trip_id">
                 
@@ -514,7 +582,12 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 </div>
                 
                 <div style="margin-bottom: 20px;">
-                    <label class="pbi-label" style="font-weight: 700; border-bottom: 1px solid var(--glass-border); padding-bottom: 6px; margin-bottom: 12px; display: block; color: var(--text-primary);">Expenses / Biaya Transaksi</label>
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid var(--glass-border); padding-bottom: 6px; margin-bottom: 12px;">
+                        <label class="pbi-label" style="font-weight: 700; margin: 0; color: var(--text-primary);">Expenses / Biaya Transaksi</label>
+                        <button type="button" onclick="addNewExpenseRowInModal()" style="background: rgba(17, 141, 255, 0.1); color: var(--pbi-blue); border: 1px solid var(--pbi-blue); padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                            ➕ Tambah Biaya
+                        </button>
+                    </div>
                     <div id="modal_expenses_list" style="display: flex; flex-direction: column; gap: 12px; max-height: 280px; overflow-y: auto; padding-right: 4px;">
                         <!-- Populate dynamically in JS -->
                     </div>
@@ -525,14 +598,34 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                     <button type="submit" class="btn-generate" style="flex: 1; height: auto; padding: 12px; font-weight: bold;">Save Changes</button>
                 </div>
             </form>
-            <form id="deleteTripForm" method="POST" action="report.php" style="display:none;">
+            <form id="deleteTripForm" action="javascript:void(0);" style="display:none;">
                 <input type="hidden" name="action" value="delete_trip_admin">
                 <input type="hidden" name="trip_id" id="delete_trip_id">
             </form>
         </div>
     </div>
 
+    <!-- Floating Toast Notification Container -->
+    <div id="toastContainer" style="position: fixed; top: 20px; right: 20px; z-index: 99999; display: flex; flex-direction: column; gap: 10px;"></div>
+
     <script>
+        function showToast(msg, isError = false) {
+            const toastContainer = document.getElementById('toastContainer');
+            if (!toastContainer) return;
+            const toast = document.createElement('div');
+            toast.style.cssText = `padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; font-weight: 600; color: white; background: ${isError ? '#dc2626' : '#16a34a'}; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transition: all 0.3s ease; opacity: 0; transform: translateY(-10px);`;
+            toast.innerHTML = (isError ? '❌ ' : '✅ ') + msg;
+            toastContainer.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '1';
+                toast.style.transform = 'translateY(0)';
+            }, 10);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-10px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
         const mandatoryPhoto = "<?= $mandatory_photo ?>";
 
         function toggleSidebar() {
@@ -576,7 +669,8 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
         let currentPage = 1;
         let pageSize = 10;
 
-        async function generateReport() {
+        async function generateReport(keepPage = false) {
+            const savedPage = currentPage;
             const formData = new FormData();
             formData.append('driver_id', document.getElementById('driver_id').value);
             formData.append('start_date', document.getElementById('start_date').value);
@@ -585,7 +679,11 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
             const res = await fetch('api_get_report.php', { method: 'POST', body: formData });
             currentData = await res.json();
 
-            currentPage = 1; // reset page on load
+            if (keepPage && savedPage) {
+                currentPage = savedPage;
+            } else {
+                currentPage = 1;
+            }
             renderReportTable();
 
             document.getElementById('resultsBox').style.display = 'block';
@@ -1268,10 +1366,16 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                              expCard.innerHTML = `
                                  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed var(--glass-border); padding-bottom: 6px;">
                                      <span style="font-weight: bold; color: var(--text-primary);">Expense ID: ${e.id} (${e.expense_type.toUpperCase()})</span>
-                                     <label style="display: flex; align-items: center; gap: 6px; font-weight: 700; cursor: pointer; color: #166534; user-select: none;">
-                                         <input type="checkbox" name="expense_approved[${e.id}]" value="approved" ${checked} style="width:16px; height:16px; cursor:pointer; margin: 0 4px 0 0;">
-                                         Approve
-                                     </label>
+                                     <div style="display: flex; align-items: center; gap: 10px;">
+                                         <label style="display: flex; align-items: center; gap: 4px; font-weight: 700; cursor: pointer; color: #166534; user-select: none;">
+                                             <input type="checkbox" name="expense_approved[${e.id}]" value="approved" ${checked} style="width:16px; height:16px; cursor:pointer; margin: 0;">
+                                             Approve
+                                         </label>
+                                         <label style="display: flex; align-items: center; gap: 4px; font-weight: 700; cursor: pointer; color: #dc2626; user-select: none;" title="Hapus biaya ini">
+                                             <input type="checkbox" name="expense_delete[${e.id}]" value="1" style="width:16px; height:16px; cursor:pointer; margin: 0;">
+                                             Hapus
+                                         </label>
+                                     </div>
                                  </div>
                                  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
                                      <div style="flex: 1; min-width: 100px;">
@@ -1316,6 +1420,63 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                  alert("JS Error: " + err.message);
              }
          }
+
+         let newExpenseCounter = 0;
+         function addNewExpenseRowInModal() {
+             newExpenseCounter++;
+             const id = 'new_' + newExpenseCounter;
+             const expensesListEl = document.getElementById('modal_expenses_list');
+             
+             const noExpMsg = expensesListEl.querySelector('p');
+             if (noExpMsg) {
+                 noExpMsg.remove();
+             }
+
+             const expCard = document.createElement('div');
+             expCard.id = 'exp_card_' + id;
+             expCard.style.cssText = 'background: rgba(17, 141, 255, 0.05); border: 1px solid var(--pbi-blue); border-radius: 8px; padding: 10px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px;';
+             
+             expCard.innerHTML = `
+                 <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px dashed var(--glass-border); padding-bottom: 6px;">
+                     <span style="font-weight: bold; color: var(--pbi-blue);">➕ Biaya Baru (Admin)</span>
+                     <div style="display: flex; align-items: center; gap: 10px;">
+                         <label style="display: flex; align-items: center; gap: 4px; font-weight: 700; cursor: pointer; color: #166534; user-select: none;">
+                             <input type="checkbox" name="new_expense_approved[]" value="1" checked style="width:16px; height:16px; cursor:pointer; margin: 0;">
+                             Approve
+                         </label>
+                         <button type="button" onclick="document.getElementById('exp_card_${id}').remove()" style="background: rgba(220,38,38,0.1); color: #dc2626; border: none; border-radius: 4px; padding: 2px 8px; font-weight: bold; cursor: pointer; font-size: 0.75rem;">
+                             🗑️ Batal
+                         </button>
+                     </div>
+                 </div>
+                 <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                     <div style="flex: 1; min-width: 100px;">
+                         <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Type</label>
+                         <select name="new_expense_type[]" onchange="toggleLitreInput('${id}', this.value)" style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                             <option value="toll">Toll</option>
+                             <option value="gasoline">Gasoline</option>
+                             <option value="parking">Parking</option>
+                             <option value="lunch">Lunch</option>
+                             <option value="others">Others</option>
+                         </select>
+                     </div>
+                     <div style="flex: 1; min-width: 100px;">
+                         <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Amount (Rp)</label>
+                         <input type="number" name="new_expense_amount[]" placeholder="0" required style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                     </div>
+                     <div id="litre_div_${id}" style="flex: 1; min-width: 80px; display: none;">
+                         <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Litre</label>
+                         <input type="number" step="any" name="new_expense_litre[]" placeholder="0.00" style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                     </div>
+                 </div>
+                 <div>
+                     <label style="font-size: 0.7rem; color: var(--text-secondary); display: block; margin-bottom: 2px;">Note / Catatan Admin</label>
+                     <input type="text" name="new_expense_note[]" placeholder="Tambahkan catatan..." style="width: 100%; padding: 4px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--glass-border); background: var(--card-bg); color: var(--text-primary);">
+                 </div>
+             `;
+             expensesListEl.appendChild(expCard);
+             expCard.scrollIntoView({ behavior: 'smooth' });
+         }
  
          function toggleLitreInput(id, val) {
              const div = document.getElementById('litre_div_' + id);
@@ -1333,7 +1494,7 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
             document.getElementById('editTripModal').style.display = 'none';
         }
         
-        function confirmDeleteTripAdmin() {
+        async function confirmDeleteTripAdmin() {
             const tripId = document.getElementById('delete_trip_id').value;
             const targetCode = `TX-${tripId}`;
             const lang = "<?= $_SESSION['lang'] ?? 'en' ?>";
@@ -1344,7 +1505,26 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
             
             const userInput = prompt(promptMsg);
             if (userInput === targetCode) {
-                document.getElementById('deleteTripForm').submit();
+                const deleteForm = document.getElementById('deleteTripForm');
+                const fd = new FormData(deleteForm);
+                fd.append('is_ajax', '1');
+                try {
+                    const res = await fetch('report.php', {
+                        method: 'POST',
+                        body: fd,
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        closeEditTripModal();
+                        showToast(data.msg || `Trip ${targetCode} deleted`);
+                        await generateReport();
+                    } else {
+                        alert('Error: ' + (data.error || 'Failed to delete trip'));
+                    }
+                } catch(err) {
+                    alert('Error deleting trip: ' + err.message);
+                }
             } else if (userInput !== null) {
                 alert(lang === 'id' 
                     ? `Konfirmasi gagal. Kode yang Anda masukkan salah.` 
@@ -1355,9 +1535,6 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
         async function filterPendingTrips() {
             switchTab('detail');
             document.getElementById('driver_id').value = 'ALL';
-            document.getElementById('start_date').value = '2020-01-01';
-            const today = new Date().toISOString().split('T')[0];
-            document.getElementById('end_date').value = today;
             await generateReport();
             document.getElementById('report-filter-status').value = 'pending';
             renderReportTable();
@@ -1453,6 +1630,15 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 renderReportTable();
             });
 
+            // AJAX Edit Trip Form Submission without Page Reload
+            const editTripForm = document.getElementById('editTripForm');
+            if (editTripForm) {
+                editTripForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    saveTripAdminForm(e);
+                });
+            }
+
             // Automatically load initial report on page open
             if (activeTab === 'detail') {
                 generateReport();
@@ -1460,8 +1646,63 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 generateAnnualReport();
             }
         });
+
+        async function saveTripAdminForm(e) {
+            if (e) e.preventDefault();
+            const form = document.getElementById('editTripForm');
+            if (!form) return false;
+
+            const submitBtn = form.querySelector('button[type="submit"]');
+            const origText = submitBtn ? submitBtn.innerText : 'Save Changes';
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerText = '⏳ Saving...';
+            }
+
+            const fd = new FormData(form);
+            fd.append('is_ajax', '1');
+
+            try {
+                const res = await fetch('report.php', {
+                    method: 'POST',
+                    body: fd,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    closeEditTripModal();
+                    showToast(data.msg || 'Trip updated successfully');
+                    await generateReport(true);
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to save changes'));
+                }
+            } catch(err) {
+                alert('JS Error: ' + err.message);
+            } finally {
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.innerText = origText;
+                }
+            }
+            return false;
+        }
+
+        async function saveSingleExpenseForm(e) {
+            if (e) e.preventDefault();
+            const form = document.getElementById('singleExpenseForm');
+            const fd = new FormData(form);
+            fd.append('is_ajax', '1');
+            try {
+                const res = await fetch('report.php', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                document.getElementById('editExpenseModal').style.display = 'none';
+                showToast('Expense updated successfully');
+                await generateReport(true);
+            } catch(err) {
+                alert('Error: ' + err.message);
+            }
+            return false;
+        }
     </script>
-    </form>
 
     <!-- Modal for Edit Expense -->
     <div id="editExpenseModal" class="modal">
@@ -1470,7 +1711,7 @@ $mandatory_photo = $pdo->query("SELECT setting_value FROM settings WHERE setting
                 <h2>Edit Expense</h2>
                 <span class="close" onclick="document.getElementById('editExpenseModal').style.display='none'">&times;</span>
             </div>
-            <form method="POST" action="report.php">
+            <form id="singleExpenseForm" action="javascript:void(0);" onsubmit="saveSingleExpenseForm(event); return false;">
                 <input type="hidden" name="action" value="edit_expense_admin">
                 <input type="hidden" name="expense_id" id="edit_expense_id">
                 

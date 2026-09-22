@@ -30,16 +30,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'forgot_pin') {
             exit;
         }
 
-        $wa = trim($passenger['wa_no'] ?? '');
-        if (empty($wa)) {
-            echo json_encode(['success' => false, 'error' => 'Nomor WhatsApp Anda belum terdaftar di sistem. Silakan hubungi Admin untuk memperbarui data.']);
+        $email = trim($passenger['email'] ?? '');
+        if (empty($email)) {
+            echo json_encode(['success' => false, 'error' => 'Alamat email Microsoft Teams Anda belum terdaftar di sistem. Silakan hubungi Admin untuk memperbarui data.']);
             exit;
-        }
-
-        // Clean phone number format
-        $wa = str_replace(['+', ' ', '-'], '', $wa);
-        if (substr($wa, 0, 1) === '0') {
-            $wa = '62' . substr($wa, 1);
         }
 
         // Generate secure token
@@ -57,28 +51,37 @@ if (isset($_POST['action']) && $_POST['action'] === 'forgot_pin') {
         $dir = rtrim(dirname($_SERVER['PHP_SELF']), '/\\');
         $reset_url = $protocol . $domainName . $dir . "/passenger_login.php?reset_token=" . $raw_token;
 
-        // Send via WhatsApp API
-        $token = '989C172CB5B6C8F0983391A6945BC436';
-        $message = "Hello *" . $passenger['name'] . "*,\n\nHere is the link to reset your security PIN:\n" . $reset_url . "\n\nThis link is only valid for *1 hour*. Do not share this link with anyone.";
+        // Send via MS Teams API
+        $msg = "Hi " . htmlspecialchars($passenger['name']) . ",<br><br>" .
+               "Here is the link to reset your security PIN:<br>" .
+               "<a href=\"" . $reset_url . "\">Reset Security PIN</a><br><br>" .
+               "Or copy & paste this URL into your browser:<br>" . $reset_url . "<br><br>" .
+               "This link is valid for 1 hour. Do not share this link with anyone.";
         
+        $teams_api_url = "https://api.framas.web.id/framas-api/teams/send.php?to=" . urlencode($email) . "&msg=" . urlencode($msg);
+
         $curl = curl_init();
         curl_setopt_array($curl, array(
-          CURLOPT_URL => 'https://app.fastwa.com/api/v1/8655C64C0C1B38982A7DA98BEDAB602D/send_text',
+          CURLOPT_URL => $teams_api_url,
           CURLOPT_RETURNTRANSFER => true,
           CURLOPT_ENCODING => '',
           CURLOPT_MAXREDIRS => 10,
           CURLOPT_TIMEOUT => 15,
           CURLOPT_FOLLOWLOCATION => true,
           CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-          CURLOPT_CUSTOMREQUEST => 'POST',
-          CURLOPT_POSTFIELDS => 'api_key=' . $token . '&phone=' . $wa . '&message=' . urlencode($message),
-          CURLOPT_SSL_VERIFYPEER => false, // Bypass SSL validation checks for outdated curl setups
+          CURLOPT_CUSTOMREQUEST => 'GET',
+          CURLOPT_SSL_VERIFYPEER => false,
           CURLOPT_SSL_VERIFYHOST => false,
         ));
         $response = curl_exec($curl);
+        $http_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
         curl_close($curl);
 
-        echo json_encode(['success' => true]);
+        if ($http_code == 200) {
+            echo json_encode(['success' => true]);
+        } else {
+            echo json_encode(['success' => false, 'error' => 'Gagal mengirim notifikasi Teams (Status code: ' . $http_code . ')']);
+        }
         exit;
     } catch (\Exception $e) {
         echo json_encode(['success' => false, 'error' => 'Server error: ' . $e->getMessage()]);
@@ -448,7 +451,7 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
 
             Swal.fire({
                 title: 'Send PIN Reset Link?',
-                text: 'We will send a PIN reset link to your WhatsApp number.',
+                text: 'We will send a PIN reset link to your Microsoft Teams account.',
                 icon: 'question',
                 showCancelButton: true,
                 confirmButtonColor: '#118DFF',
@@ -480,7 +483,7 @@ $passengers = $pdo->query("SELECT id, name, CASE WHEN pin IS NOT NULL AND pin !=
                 if (result.isConfirmed) {
                     Swal.fire({
                         title: 'Sent!',
-                        text: 'The PIN reset link has been successfully sent to your WhatsApp number. Please check your inbox.',
+                        text: 'The PIN reset link has been successfully sent to your Microsoft Teams account. Please check your Teams inbox.',
                         icon: 'success',
                         confirmButtonColor: '#118DFF'
                     });

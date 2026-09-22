@@ -16,6 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $_SESSION['username'] = $user['username'];
         $_SESSION['full_name'] = $user['full_name'];
         $_SESSION['role'] = $user['role'];
+        unset($_SESSION['note_popup_shown']);
         if ($user['role'] === 'driver') {
             $_SESSION['just_logged_in'] = true;
         }

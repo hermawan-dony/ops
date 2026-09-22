@@ -27,6 +27,119 @@ function resetPassengerApprovalIfApproved($pdo, $trip_id) {
     }
 }
 
+function getOrCreateCarId($pdo, $car_input) {
+    $car_input = trim($car_input ?? '');
+    if (empty($car_input)) return null;
+
+    if (is_numeric($car_input)) {
+        $stmt = $pdo->prepare("SELECT id FROM master_cars WHERE id = ?");
+        $stmt->execute([$car_input]);
+        $id = $stmt->fetchColumn();
+        if ($id) return (int)$id;
+    }
+
+    $stmt = $pdo->prepare("SELECT id FROM master_cars WHERE LOWER(car_no) = LOWER(?) LIMIT 1");
+    $stmt->execute([$car_input]);
+    $id = $stmt->fetchColumn();
+    if ($id) return (int)$id;
+
+    try {
+        $stmt = $pdo->prepare("INSERT INTO master_cars (car_no) VALUES (?)");
+        $stmt->execute([strtoupper($car_input)]);
+        return (int)$pdo->lastInsertId();
+    } catch (PDOException $e) {
+        $stmt_retry = $pdo->prepare("SELECT id FROM master_cars WHERE LOWER(car_no) = LOWER(?) LIMIT 1");
+        $stmt_retry->execute([$car_input]);
+        $existing = $stmt_retry->fetchColumn();
+        if ($existing) return (int)$existing;
+        throw $e;
+    }
+}
+
+function getOrCreateDestinationId($pdo, $dest_id, $dest_name) {
+    $dest_name = trim($dest_name ?? '');
+    // Normalize smart/curly quotes and backticks to standard straight quote
+    $dest_name = str_replace(["’", "‘", "`"], "'", $dest_name);
+
+    if (!empty($dest_id) && is_numeric($dest_id)) {
+        $stmt = $pdo->prepare("SELECT id FROM master_destinations WHERE id = ?");
+        $stmt->execute([$dest_id]);
+        $found = $stmt->fetchColumn();
+        if ($found) return (int)$found;
+    }
+    
+    if (empty($dest_name) || $dest_name === '?') {
+        $stmt_q = $pdo->prepare("SELECT id FROM master_destinations WHERE name = '?' LIMIT 1");
+        $stmt_q->execute();
+        $id = $stmt_q->fetchColumn();
+        if (!$id) {
+            $pdo->exec("INSERT INTO master_destinations (name) VALUES ('?')");
+            $id = $pdo->lastInsertId();
+        }
+        return (int)$id;
+    }
+    
+    $stmt = $pdo->prepare("SELECT id FROM master_destinations WHERE LOWER(name) = LOWER(?) LIMIT 1");
+    $stmt->execute([$dest_name]);
+    $id = $stmt->fetchColumn();
+    if ($id) return (int)$id;
+    
+    try {
+        $stmt_ins = $pdo->prepare("INSERT INTO master_destinations (name) VALUES (?)");
+        $stmt_ins->execute([$dest_name]);
+        return (int)$pdo->lastInsertId();
+    } catch (PDOException $e) {
+        // In case of unique constraint or collation match, gracefully return existing record
+        $stmt_retry = $pdo->prepare("SELECT id FROM master_destinations WHERE name = ? OR LOWER(name) = LOWER(?) LIMIT 1");
+        $stmt_retry->execute([$dest_name, $dest_name]);
+        $existing = $stmt_retry->fetchColumn();
+        if ($existing) return (int)$existing;
+        throw $e;
+    }
+}
+
+function getOrCreatePassengerId($pdo, $pass_id, $pass_name) {
+    $pass_name = trim($pass_name ?? '');
+    // Normalize smart/curly quotes and backticks to standard straight quote
+    $pass_name = str_replace(["’", "‘", "`"], "'", $pass_name);
+
+    if (!empty($pass_id) && is_numeric($pass_id)) {
+        $stmt = $pdo->prepare("SELECT id FROM master_passengers WHERE id = ?");
+        $stmt->execute([$pass_id]);
+        $found = $stmt->fetchColumn();
+        if ($found) return (int)$found;
+    }
+    
+    if (empty($pass_name) || $pass_name === '?') {
+        $stmt_q = $pdo->prepare("SELECT id FROM master_passengers WHERE name = '?' LIMIT 1");
+        $stmt_q->execute();
+        $id = $stmt_q->fetchColumn();
+        if (!$id) {
+            $pdo->exec("INSERT INTO master_passengers (name) VALUES ('?')");
+            $id = $pdo->lastInsertId();
+        }
+        return (int)$id;
+    }
+    
+    $stmt = $pdo->prepare("SELECT id FROM master_passengers WHERE LOWER(name) = LOWER(?) LIMIT 1");
+    $stmt->execute([$pass_name]);
+    $id = $stmt->fetchColumn();
+    if ($id) return (int)$id;
+    
+    try {
+        $stmt_ins = $pdo->prepare("INSERT INTO master_passengers (name) VALUES (?)");
+        $stmt_ins->execute([$pass_name]);
+        return (int)$pdo->lastInsertId();
+    } catch (PDOException $e) {
+        // In case of unique constraint or collation match, gracefully return existing record
+        $stmt_retry = $pdo->prepare("SELECT id FROM master_passengers WHERE name = ? OR LOWER(name) = LOWER(?) LIMIT 1");
+        $stmt_retry->execute([$pass_name, $pass_name]);
+        $existing = $stmt_retry->fetchColumn();
+        if ($existing) return (int)$existing;
+        throw $e;
+    }
+}
+
 function sendWhatsAppNotification($pdo, $trip_id, $is_modification = false) {
     // Check if WhatsApp notification is enabled
     $wa_notify = $pdo->query("SELECT setting_value FROM settings WHERE setting_key = 'wa_notify'")->fetchColumn();
@@ -142,47 +255,18 @@ try {
         $shift = $stmt->fetch();
         
         if ($shift) {
-            $dest_id = $_POST['destination_id'] ?? '';
-            $passenger_id = $_POST['passenger_id'] ?? '';
+            $dest_id_input = $_POST['destination_id'] ?? '';
+            $dest_name_input = $_POST['destination_name'] ?? $_POST['new_destination'] ?? '';
+            $dest_id = getOrCreateDestinationId($pdo, $dest_id_input, $dest_name_input);
 
-            // Handle empty destination: find or create '?'
-            if (empty($dest_id)) {
-                $stmt_q = $pdo->prepare("SELECT id FROM master_destinations WHERE name = '?'");
-                $stmt_q->execute();
-                $dest_id = $stmt_q->fetchColumn();
-                if (!$dest_id) {
-                    $pdo->exec("INSERT INTO master_destinations (name) VALUES ('?')");
-                    $dest_id = $pdo->lastInsertId();
-                }
-            } else if ($dest_id === 'NEW' && !empty($_POST['new_destination'])) {
-                $stmt_new = $pdo->prepare("INSERT INTO master_destinations (name) VALUES (?)");
-                $stmt_new->execute([$_POST['new_destination']]);
-                $dest_id = $pdo->lastInsertId();
-            }
+            $passenger_id_input = $_POST['passenger_id'] ?? '';
+            $passenger_name_input = $_POST['passenger_name'] ?? $_POST['new_passenger'] ?? '';
+            $passenger_id = getOrCreatePassengerId($pdo, $passenger_id_input, $passenger_name_input);
 
-            // Handle empty passenger: find or create '?'
-            if (empty($passenger_id)) {
-                $stmt_q = $pdo->prepare("SELECT id FROM master_passengers WHERE name = '?'");
-                $stmt_q->execute();
-                $passenger_id = $stmt_q->fetchColumn();
-                if (!$passenger_id) {
-                    $pdo->exec("INSERT INTO master_passengers (name) VALUES ('?')");
-                    $passenger_id = $pdo->lastInsertId();
-                }
-            }
-
-            // Verify dest_id exists
-            $stmt_check = $pdo->prepare("SELECT id FROM master_destinations WHERE id = ?");
-            $stmt_check->execute([$dest_id]);
-            if (!$stmt_check->fetch()) {
-                throw new Exception("Tujuan yang dipilih tidak terdaftar di sistem. Silakan pilih dari daftar.");
-            }
-
-            // Verify passenger_id exists
-            $stmt_check = $pdo->prepare("SELECT id FROM master_passengers WHERE id = ?");
-            $stmt_check->execute([$passenger_id]);
-            if (!$stmt_check->fetch()) {
-                throw new Exception("Penumpang yang dipilih tidak terdaftar di sistem. Silakan pilih dari daftar.");
+            $car_input = $_POST['car_no'] ?? $_POST['car_id'] ?? '';
+            $car_id = getOrCreateCarId($pdo, $car_input);
+            if (!$car_id) {
+                throw new Exception("Nomor Mobil wajib diisi.");
             }
 
             $photo = '';
@@ -195,7 +279,7 @@ try {
                     $shift['id'], 
                     $dest_id, 
                     $passenger_id, 
-                    $_POST['car_id'], 
+                    $car_id, 
                     $_POST['km_start'], 
                     $photo,
                     $_POST['start_lat'] ?? null,
@@ -212,35 +296,13 @@ try {
         }
     } elseif ($action === 'edit_trip') {
         $trip_id = $_POST['trip_id'];
-        $dest_id = $_POST['destination_id'] ?? '';
-        $passenger_id = $_POST['passenger_id'] ?? '';
+        $dest_id_input = $_POST['destination_id'] ?? '';
+        $dest_name_input = $_POST['destination_name'] ?? $_POST['new_destination'] ?? '';
+        $dest_id = getOrCreateDestinationId($pdo, $dest_id_input, $dest_name_input);
 
-        if (empty($dest_id)) {
-            throw new Exception("Tujuan perjalanan tidak boleh kosong. Silakan ketik dan pilih tujuan dari daftar.");
-        }
-        if (empty($passenger_id)) {
-            throw new Exception("Penumpang tidak boleh kosong. Silakan ketik dan pilih penumpang dari daftar.");
-        }
-
-        if ($dest_id === 'NEW' && !empty($_POST['new_destination'])) {
-            $stmt_new = $pdo->prepare("INSERT INTO master_destinations (name) VALUES (?)");
-            $stmt_new->execute([$_POST['new_destination']]);
-            $dest_id = $pdo->lastInsertId();
-        }
-
-        // Verify dest_id exists
-        $stmt_check = $pdo->prepare("SELECT id FROM master_destinations WHERE id = ?");
-        $stmt_check->execute([$dest_id]);
-        if (!$stmt_check->fetch()) {
-            throw new Exception("Tujuan yang dipilih tidak terdaftar di sistem. Silakan pilih dari daftar.");
-        }
-
-        // Verify passenger_id exists
-        $stmt_check = $pdo->prepare("SELECT id FROM master_passengers WHERE id = ?");
-        $stmt_check->execute([$passenger_id]);
-        if (!$stmt_check->fetch()) {
-            throw new Exception("Penumpang yang dipilih tidak terdaftar di sistem. Silakan pilih dari daftar.");
-        }
+        $passenger_id_input = $_POST['passenger_id'] ?? '';
+        $passenger_name_input = $_POST['passenger_name'] ?? $_POST['new_passenger'] ?? '';
+        $passenger_id = getOrCreatePassengerId($pdo, $passenger_id_input, $passenger_name_input);
 
         $photo = null;
         if ($mandatory_photo === '1' && isset($_FILES['km_start_photo']) && $_FILES['km_start_photo']['error'] !== UPLOAD_ERR_NO_FILE) {
@@ -264,12 +326,18 @@ try {
             $end_time_update = date('Y-m-d H:i:s');
         }
 
+        $car_input = $_POST['car_no'] ?? $_POST['car_id'] ?? '';
+        $car_id = getOrCreateCarId($pdo, $car_input);
+        if (!$car_id) {
+            throw new Exception("Nomor Mobil wajib diisi.");
+        }
+
         if ($photo) {
             $stmt = $pdo->prepare("UPDATE trips SET destination_id = ?, passenger_id = ?, car_id = ?, km_start = ?, km_end = ?, km_start_photo = ?, status = ?, end_time = ? WHERE id = ?");
             $stmt->execute([
                 $dest_id,
                 $passenger_id,
-                $_POST['car_id'],
+                $car_id,
                 $_POST['km_start'],
                 $km_end,
                 $photo,
@@ -282,7 +350,7 @@ try {
             $stmt->execute([
                 $dest_id,
                 $passenger_id,
-                $_POST['car_id'],
+                $car_id,
                 $_POST['km_start'],
                 $km_end,
                 $status_update,
@@ -343,12 +411,15 @@ try {
             throw new Exception("Perjalanan tidak dapat dibatalkan karena sudah ada biaya yang dicatat.");
         }
         
-        // Fetch trip info to delete start odometer photo
-        $stmt_trip = $pdo->prepare("SELECT km_start_photo FROM trips WHERE id = ? AND status = 'ongoing'");
+        // Fetch trip info to delete start odometer photo and check orphan master data
+        $stmt_trip = $pdo->prepare("SELECT destination_id, passenger_id, km_start_photo FROM trips WHERE id = ? AND status = 'ongoing'");
         $stmt_trip->execute([$trip_id]);
         $trip = $stmt_trip->fetch();
         
         if ($trip) {
+            $dest_id = $trip['destination_id'];
+            $pass_id = $trip['passenger_id'];
+
             if ($trip['km_start_photo']) {
                 @unlink('uploads/' . $trip['km_start_photo']);
                 @unlink('uploads/thumb_' . $trip['km_start_photo']);
@@ -357,6 +428,35 @@ try {
             // Delete trip
             $stmt_delete = $pdo->prepare("DELETE FROM trips WHERE id = ?");
             $stmt_delete->execute([$trip_id]);
+
+            // Clean up orphan destination if not used by any other trip
+            if ($dest_id) {
+                $stmt_cnt = $pdo->prepare("SELECT COUNT(*) FROM trips WHERE destination_id = ?");
+                $stmt_cnt->execute([$dest_id]);
+                if ($stmt_cnt->fetchColumn() == 0) {
+                    $stmt_dname = $pdo->prepare("SELECT name FROM master_destinations WHERE id = ?");
+                    $stmt_dname->execute([$dest_id]);
+                    $dname = $stmt_dname->fetchColumn();
+                    if ($dname && $dname !== '?') {
+                        $pdo->prepare("DELETE FROM master_destinations WHERE id = ?")->execute([$dest_id]);
+                    }
+                }
+            }
+
+            // Clean up orphan passenger if not used by any other trip
+            if ($pass_id) {
+                $stmt_cnt = $pdo->prepare("SELECT COUNT(*) FROM trips WHERE passenger_id = ?");
+                $stmt_cnt->execute([$pass_id]);
+                if ($stmt_cnt->fetchColumn() == 0) {
+                    $stmt_pname = $pdo->prepare("SELECT name FROM master_passengers WHERE id = ?");
+                    $stmt_pname->execute([$pass_id]);
+                    $pname = $stmt_pname->fetchColumn();
+                    if ($pname && $pname !== '?') {
+                        $pdo->prepare("DELETE FROM master_passengers WHERE id = ?")->execute([$pass_id]);
+                    }
+                }
+            }
+
             $_SESSION['flash_success'] = ($_SESSION['lang'] ?? 'en') === 'id' ? "Perjalanan berhasil dibatalkan dan dihapus." : "Trip successfully cancelled and deleted.";
         } else {
             throw new Exception(($_SESSION['lang'] ?? 'en') === 'id' ? "Perjalanan tidak ditemukan atau sudah selesai." : "Trip not found or already completed.");
@@ -461,6 +561,70 @@ try {
         } else {
             throw new Exception("Transaksi tidak ditemukan atau tidak memenuhi syarat untuk dihapus.");
         }
+    } elseif ($action === 'delete_destination') {
+        $dest_id = intval($_POST['destination_id'] ?? 0);
+        if (!$dest_id) {
+            throw new Exception("ID Tujuan tidak valid.");
+        }
+
+        $stmt_chk = $pdo->prepare("SELECT id, name FROM master_destinations WHERE id = ?");
+        $stmt_chk->execute([$dest_id]);
+        $dest = $stmt_chk->fetch();
+        if (!$dest) {
+            throw new Exception("Tujuan tidak ditemukan.");
+        }
+
+        if ($dest['name'] === '?') {
+            throw new Exception("Tujuan default '?' tidak boleh dihapus.");
+        }
+
+        // Check if destination is used in any trips
+        $stmt_cnt = $pdo->prepare("SELECT COUNT(*) FROM trips WHERE destination_id = ?");
+        $stmt_cnt->execute([$dest_id]);
+        $trip_count = (int)$stmt_cnt->fetchColumn();
+
+        if ($trip_count > 0) {
+            throw new Exception("Tujuan '{$dest['name']}' tidak dapat dihapus karena sudah tercatat dalam {$trip_count} riwayat perjalanan.");
+        }
+
+        $stmt_del = $pdo->prepare("DELETE FROM master_destinations WHERE id = ?");
+        $stmt_del->execute([$dest_id]);
+
+        $_SESSION['flash_success'] = ($_SESSION['lang'] ?? 'id') === 'id' 
+            ? "Tujuan '{$dest['name']}' berhasil dihapus dari daftar riwayat." 
+            : "Destination '{$dest['name']}' successfully removed from suggestions.";
+    } elseif ($action === 'delete_passenger') {
+        $pass_id = intval($_POST['passenger_id'] ?? 0);
+        if (!$pass_id) {
+            throw new Exception("ID Penumpang tidak valid.");
+        }
+
+        $stmt_chk = $pdo->prepare("SELECT id, name FROM master_passengers WHERE id = ?");
+        $stmt_chk->execute([$pass_id]);
+        $pass = $stmt_chk->fetch();
+        if (!$pass) {
+            throw new Exception("Penumpang tidak ditemukan.");
+        }
+
+        if ($pass['name'] === '?') {
+            throw new Exception("Penumpang default '?' tidak boleh dihapus.");
+        }
+
+        // Check if passenger is used in any trips
+        $stmt_cnt = $pdo->prepare("SELECT COUNT(*) FROM trips WHERE passenger_id = ?");
+        $stmt_cnt->execute([$pass_id]);
+        $trip_count = (int)$stmt_cnt->fetchColumn();
+
+        if ($trip_count > 0) {
+            throw new Exception("Penumpang '{$pass['name']}' tidak dapat dihapus karena sudah tercatat dalam {$trip_count} riwayat perjalanan.");
+        }
+
+        $stmt_del = $pdo->prepare("DELETE FROM master_passengers WHERE id = ?");
+        $stmt_del->execute([$pass_id]);
+
+        $_SESSION['flash_success'] = ($_SESSION['lang'] ?? 'id') === 'id' 
+            ? "Penumpang '{$pass['name']}' berhasil dihapus dari daftar riwayat." 
+            : "Passenger '{$pass['name']}' successfully removed from suggestions.";
     }
 } catch (Exception $e) {
     $_SESSION['flash_error'] = "Error: " . $e->getMessage();

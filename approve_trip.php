@@ -28,15 +28,15 @@ $texts = [
         'driver' => 'Driver',
         'destination' => 'Destination',
         'time' => 'Time / Duration',
-        'create_pin' => 'Create a 6-digit PIN for Security',
-        'enter_pin' => 'Enter your 6-digit PIN',
-        'pin_placeholder' => '••••••',
+        'create_pin' => 'Create a 4-digit PIN for Security',
+        'enter_pin' => 'Enter your 4-digit PIN',
+        'pin_placeholder' => '••••',
         'feedback_label' => 'Notes / Feedback (Optional)',
         'feedback_placeholder' => 'Share your experience...',
         'reject_btn' => 'Reject Selected',
         'approve_btn' => 'Approve Selected',
         'approve_all_btn' => 'Approve All (%d)',
-        'pin_length_err' => 'PIN must be 6 digits.',
+        'pin_length_err' => 'PIN must be 4 digits.',
         'pin_invalid_err' => 'Invalid PIN.',
         
         // Detailed labels
@@ -88,15 +88,15 @@ $texts = [
         'driver' => 'Driver',
         'destination' => 'Tujuan',
         'time' => 'Waktu / Durasi',
-        'create_pin' => 'Buat 6-digit PIN untuk Keamanan',
-        'enter_pin' => 'Masukkan 6-digit PIN Anda',
-        'pin_placeholder' => '••••••',
+        'create_pin' => 'Buat 4-digit PIN untuk Keamanan',
+        'enter_pin' => 'Masukkan 4-digit PIN Anda',
+        'pin_placeholder' => '••••',
         'feedback_label' => 'Catatan / Umpan Balik (Opsional)',
         'feedback_placeholder' => 'Tuliskan pengalaman Anda...',
         'reject_btn' => 'Tolak Terpilih',
         'approve_btn' => 'Setujui Terpilih',
         'approve_all_btn' => 'Setujui Semua (%d)',
-        'pin_length_err' => 'PIN harus 6 digit.',
+        'pin_length_err' => 'PIN harus 4 digit.',
         'pin_invalid_err' => 'PIN tidak valid.',
         
         // Detailed labels
@@ -183,7 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $trip && !$expired) {
     // Validate PIN
     $pin_valid = false;
     if ($setup_pin) {
-        if (strlen($input_pin) === 6 && is_numeric($input_pin)) {
+        if (strlen($input_pin) === 4 && is_numeric($input_pin)) {
             $hashed_pin = password_hash($input_pin, PASSWORD_DEFAULT);
             $pdo->prepare("UPDATE master_passengers SET pin = ? WHERE id = ?")->execute([$hashed_pin, $trip['passenger_id']]);
             $pin_valid = true;
@@ -988,8 +988,8 @@ if (!empty($pending_trips)) {
                     <!-- PIN & Feedback Form Wrapper -->
                     <div class="footer-form">
                         <div class="form-group">
-                            <label><?= htmlspecialchars($setup_pin ? $t['create_pin'] : $t['enter_pin']) ?></label>
-                            <input type="password" name="pin" id="pin-field" class="form-control pin-input" placeholder="<?= htmlspecialchars($t['pin_placeholder']) ?>" pattern="\d{6}" maxlength="6" inputmode="numeric" required autocomplete="off">
+                            <label><?= htmlspecialchars($setup_pin ? $t['create_pin'] : ($lang === 'id' ? 'Masukkan PIN Anda (4 atau 6 digit)' : 'Enter your PIN (4 or 6 digits)')) ?></label>
+                            <input type="password" name="pin" id="pin-field" class="form-control pin-input" placeholder="<?= htmlspecialchars($setup_pin ? '••••' : '•••• / ••••••') ?>" pattern="<?= $setup_pin ? '\d{4}' : '\d{4,6}' ?>" maxlength="<?= $setup_pin ? '4' : '6' ?>" inputmode="numeric" required autocomplete="off">
                         </div>
 
                         <div class="form-group">
@@ -1069,10 +1069,21 @@ if (!empty($pending_trips)) {
         // Form submission helpers
         function submitFormAction(action) {
             const pinField = document.getElementById('pin-field');
-            if (!pinField.value || pinField.value.length !== 6) {
-                pinField.focus();
-                alert("<?= htmlspecialchars($t['pin_length_err']) ?>");
-                return;
+            const pinLen = pinField.value ? pinField.value.length : 0;
+            const isSetup = <?= $setup_pin ? 'true' : 'false' ?>;
+            
+            if (isSetup) {
+                if (pinLen !== 4) {
+                    pinField.focus();
+                    alert("<?= htmlspecialchars($t['pin_length_err']) ?>");
+                    return;
+                }
+            } else {
+                if (pinLen !== 4 && pinLen !== 6) {
+                    pinField.focus();
+                    alert("<?= $lang === 'id' ? 'PIN harus 4 atau 6 digit.' : 'PIN must be 4 or 6 digits.' ?>");
+                    return;
+                }
             }
             
             document.getElementById('form-action').value = action;
@@ -1081,10 +1092,21 @@ if (!empty($pending_trips)) {
 
         function submitSingleTrip(tripId, action) {
             const pinField = document.getElementById('pin-field');
-            if (!pinField.value || pinField.value.length !== 6) {
-                pinField.focus();
-                alert("<?= htmlspecialchars($t['pin_length_err']) ?>");
-                return;
+            const pinLen = pinField.value ? pinField.value.length : 0;
+            const isSetup = <?= $setup_pin ? 'true' : 'false' ?>;
+            
+            if (isSetup) {
+                if (pinLen !== 4) {
+                    pinField.focus();
+                    alert("<?= htmlspecialchars($t['pin_length_err']) ?>");
+                    return;
+                }
+            } else {
+                if (pinLen !== 4 && pinLen !== 6) {
+                    pinField.focus();
+                    alert("<?= $lang === 'id' ? 'PIN harus 4 atau 6 digit.' : 'PIN must be 4 or 6 digits.' ?>");
+                    return;
+                }
             }
 
             document.getElementById('form-action').value = action;

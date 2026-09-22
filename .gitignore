@@ -9,3 +9,10 @@ dump_schema.php
 error_log
 config.php
 sendwa.php
+*.sql
+*.srd
+*.xlsx
+.deploy_cookie
+.deploy_state.json
+.teams_notif.log
+passenger_dashboard_backup_*.php

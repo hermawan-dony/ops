@@ -21,8 +21,12 @@ try {
             $stmt = $pdo->prepare("INSERT INTO master_cars (car_no, model, last_service_km) VALUES (?, ?, ?)");
             $stmt->execute([$_POST['car_no'], $_POST['model'], $_POST['last_service_km']]);
         } elseif ($type === 'passenger') {
-            $stmt = $pdo->prepare("INSERT INTO master_passengers (name, wa_no) VALUES (?, ?)");
-            $stmt->execute([$_POST['name'], $_POST['wa_no']]);
+            $email = !empty($_POST['email']) ? $_POST['email'] : null;
+            $pin = !empty($_POST['pin']) ? trim($_POST['pin']) : null;
+            $hashed_pin = $pin ? password_hash($pin, PASSWORD_DEFAULT) : null;
+            $oto_notif = ($_POST['oto_notif'] ?? 'N') === 'Y' ? 'Y' : 'N';
+            $stmt = $pdo->prepare("INSERT INTO master_passengers (name, wa_no, email, pin, oto_notif) VALUES (?, ?, ?, ?, ?)");
+            $stmt->execute([$_POST['name'], $_POST['wa_no'], $email, $hashed_pin, $oto_notif]);
         } elseif ($type === 'destination') {
             $stmt = $pdo->prepare("INSERT INTO master_destinations (name) VALUES (?)");
             $stmt->execute([$_POST['name']]);
@@ -48,8 +52,17 @@ try {
             $stmt = $pdo->prepare("UPDATE master_cars SET car_no=?, model=?, last_service_km=? WHERE id=?");
             $stmt->execute([$_POST['car_no'], $_POST['model'], $_POST['last_service_km'], $id]);
         } elseif ($type === 'passenger') {
-            $stmt = $pdo->prepare("UPDATE master_passengers SET name=?, wa_no=? WHERE id=?");
-            $stmt->execute([$_POST['name'], $_POST['wa_no'], $id]);
+            $email = !empty($_POST['email']) ? $_POST['email'] : null;
+            $pin = isset($_POST['pin']) ? trim($_POST['pin']) : null;
+            $oto_notif = ($_POST['oto_notif'] ?? 'N') === 'Y' ? 'Y' : 'N';
+            if ($pin !== null && $pin !== '') {
+                $hashed_pin = password_hash($pin, PASSWORD_DEFAULT);
+                $stmt = $pdo->prepare("UPDATE master_passengers SET name=?, wa_no=?, email=?, pin=?, oto_notif=? WHERE id=?");
+                $stmt->execute([$_POST['name'], $_POST['wa_no'], $email, $hashed_pin, $oto_notif, $id]);
+            } else {
+                $stmt = $pdo->prepare("UPDATE master_passengers SET name=?, wa_no=?, email=?, oto_notif=? WHERE id=?");
+                $stmt->execute([$_POST['name'], $_POST['wa_no'], $email, $oto_notif, $id]);
+            }
         } elseif ($type === 'destination') {
             $stmt = $pdo->prepare("UPDATE master_destinations SET name=? WHERE id=?");
             $stmt->execute([$_POST['name'], $id]);
@@ -62,6 +75,18 @@ try {
         $car_id = $_POST['car_id'] ?: null;
         $stmt = $pdo->prepare("UPDATE users SET preferred_car_id = ? WHERE id = ?");
         $stmt->execute([$car_id, $driver_id]);
+    } elseif ($action === 'toggle_oto_notif') {
+        $id = intval($_POST['id'] ?? $_GET['id'] ?? 0);
+        $val = ($_POST['val'] ?? $_GET['val'] ?? 'N') === 'Y' ? 'Y' : 'N';
+        if ($id) {
+            $stmt = $pdo->prepare("UPDATE master_passengers SET oto_notif = ? WHERE id = ?");
+            $stmt->execute([$val, $id]);
+            if (isset($_SERVER['HTTP_X_REQUESTED_WITH']) || isset($_GET['ajax']) || isset($_POST['ajax'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true, 'oto_notif' => $val]);
+                exit;
+            }
+        }
     } elseif ($action === 'delete') {
         $id = $_GET['id'] ?? null;
         if ($id) {
