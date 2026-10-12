@@ -824,6 +824,104 @@ function format_date_bilingual($date_str, $lang = 'en', $format = 'd M Y') {
             line-height: 1;
         }
 
+        /* Overtime Toolbar Controls */
+        .ot-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+            width: 100%;
+        }
+        .ot-toolbar-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .ot-sort-select {
+            padding: 7px 10px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            width: auto;
+            min-width: 130px;
+            border-radius: 8px;
+        }
+        .ot-select-btns {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-ctrl {
+            padding: 7px 12px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            border-radius: 8px;
+            cursor: pointer;
+            white-space: nowrap;
+            background: var(--card-bg);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            box-shadow: var(--card-shadow);
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+        }
+        .btn-ctrl:hover {
+            background: var(--bg-page);
+            border-color: #cbd5e1;
+        }
+        .ot-toolbar-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: auto;
+        }
+        .btn-ot-reject {
+            padding: 8px 14px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            border-radius: 8px;
+            cursor: pointer;
+            border: none;
+            white-space: nowrap;
+            background: #dc2626;
+            color: white;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
+        }
+        .btn-ot-reject:hover {
+            background: #b91c1c;
+            transform: translateY(-1px);
+        }
+        .btn-ot-approve {
+            padding: 8px 16px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            border-radius: 8px;
+            cursor: pointer;
+            border: none;
+            white-space: nowrap;
+            background: #16a34a;
+            color: white;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            box-shadow: 0 2px 6px rgba(22, 163, 74, 0.3);
+        }
+        .btn-ot-approve:hover {
+            background: #15803d;
+            transform: translateY(-1px);
+        }
+
         /* Mobile Responsive & Card Transformation (No Horizontal Scroll Needed) */
         @media (max-width: 768px) {
             .header-banner {
@@ -891,6 +989,56 @@ function format_date_bilingual($date_str, $lang = 'en', $format = 'd M Y') {
                 display: none !important;
             }
             
+            /* Mobile Overtime Toolbar (2 ergonomic rows: Row 1 = Controls, Row 2 = Full-width action buttons) */
+            .ot-toolbar {
+                flex-direction: column;
+                gap: 10px;
+                margin-bottom: 12px;
+                width: 100%;
+            }
+            .ot-toolbar-left {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                width: 100%;
+                gap: 8px;
+            }
+            .ot-sort-select {
+                flex: 1;
+                min-width: 0;
+                padding: 8px 10px;
+                font-size: 0.8rem;
+            }
+            .ot-select-btns {
+                display: flex;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .btn-ctrl {
+                padding: 8px 10px;
+                font-size: 0.78rem;
+            }
+            .ot-toolbar-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                width: 100%;
+                margin-left: 0;
+            }
+            .btn-ot-reject {
+                flex: 1;
+                height: 42px;
+                font-size: 0.85rem;
+                border-radius: 8px;
+            }
+            .btn-ot-approve {
+                flex: 1.25;
+                height: 42px;
+                font-size: 0.88rem;
+                border-radius: 8px;
+                letter-spacing: 0.3px;
+            }
+
             /* Mobile Compact Cards for Expenses Table */
             #expenseTable .desktop-only-cell {
                 display: none !important;
@@ -998,32 +1146,36 @@ function format_date_bilingual($date_str, $lang = 'en', $format = 'd M Y') {
                 <input type="hidden" name="start_date" value="<?= $start_date ?>">
                 <input type="hidden" name="end_date" value="<?= $end_date ?>">
 
-                <!-- Table controls (Sort & Actions in 1 single line) -->
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: nowrap; gap: 6px; margin-bottom: 12px; width: 100%;">
-                    <div style="display: flex; align-items: center; gap: 4px; flex-shrink: 0;">
-                        <select id="sort-ot" onchange="sortOtTable()" class="filter-input" style="padding: 6px 6px; font-size: 0.75rem; width: auto; max-width: 105px;">
-                            <option value="date_desc">Newest</option>
-                            <option value="date_asc">Oldest</option>
-                            <option value="ot_desc">OT High</option>
-                            <option value="ot_asc">OT Low</option>
+                <!-- Table controls (Responsive Sort & Actions Toolbar) -->
+                <div class="ot-toolbar">
+                    <div class="ot-toolbar-left">
+                        <select id="sort-ot" onchange="sortOtTable()" class="filter-input ot-sort-select">
+                            <option value="date_desc"><?= $lang === 'id' ? 'Terbaru ⇅' : 'Newest ⇅' ?></option>
+                            <option value="date_asc"><?= $lang === 'id' ? 'Terlama ⇅' : 'Oldest ⇅' ?></option>
+                            <option value="ot_desc"><?= $lang === 'id' ? 'Lembur Tertinggi ⇅' : 'OT High ⇅' ?></option>
+                            <option value="ot_asc"><?= $lang === 'id' ? 'Lembur Terendah ⇅' : 'OT Low ⇅' ?></option>
                         </select>
+                        <?php if (!empty($supervisor_shifts)): ?>
+                            <div class="ot-select-btns">
+                                <button type="button" onclick="selectAllCheckboxes(true)" class="btn-ctrl">
+                                    ☑️ <?= $lang === 'id' ? 'Semua' : 'All' ?>
+                                </button>
+                                <button type="button" onclick="selectAllCheckboxes(false)" class="btn-ctrl">
+                                    🔄 Reset
+                                </button>
+                            </div>
+                        <?php endif; ?>
                     </div>
                     
                     <?php 
                     $actionable_ot_shifts = array_filter($supervisor_shifts, function($s) { return $s['approval_status'] !== 'approved' || !empty($s['note_status']); });
                     if (!empty($supervisor_shifts)): 
                     ?>
-                        <div style="display: flex; align-items: center; gap: 4px; justify-content: flex-end; flex-shrink: 0;">
-                            <button type="button" onclick="selectAllCheckboxes(true)" class="btn-submit" style="width: auto !important; padding: 6px 8px; font-size: 0.75rem; font-weight: 700; border-radius: 6px; cursor: pointer; white-space: nowrap; background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); box-shadow: var(--card-shadow);">
-                                ☑️ <?= $lang === 'id' ? 'Semua' : 'All' ?>
-                            </button>
-                            <button type="button" onclick="selectAllCheckboxes(false)" class="btn-submit" style="width: auto !important; padding: 6px 8px; font-size: 0.75rem; font-weight: 700; border-radius: 6px; cursor: pointer; white-space: nowrap; background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border-color); box-shadow: var(--card-shadow);">
-                                🔄 Reset
-                            </button>
-                            <button type="button" onclick="submitBulkRejectOt()" class="btn-submit" style="width: auto !important; padding: 6px 10px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: none; white-space: nowrap; background: #dc2626; color: white;">
+                        <div class="ot-toolbar-actions">
+                            <button type="button" onclick="submitBulkRejectOt()" class="btn-ot-reject">
                                 ❌ <?= $lang === 'id' ? 'Tolak' : 'Not Approve' ?>
                             </button>
-                            <button type="button" onclick="submitBulkApproveOt()" class="btn-submit" style="width: auto !important; padding: 6px 10px; font-size: 0.78rem; font-weight: 700; border-radius: 6px; cursor: pointer; border: none; white-space: nowrap; background: var(--success); color: white;">
+                            <button type="button" onclick="submitBulkApproveOt()" class="btn-ot-approve">
                                 ✓ <?= $lang === 'id' ? 'Setujui' : 'Approve' ?>
                             </button>
                         </div>
@@ -1161,10 +1313,10 @@ function format_date_bilingual($date_str, $lang = 'en', $format = 'd M Y') {
                     </div>
 
                     <select id="sort-expenses" onchange="sortExpensesTable()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 120px;">
-                        <option value="date_desc">Date: Newest</option>
-                        <option value="date_asc">Date: Oldest</option>
-                        <option value="cost_desc">Cost: High</option>
-                        <option value="cost_asc">Cost: Low</option>
+                        <option value="date_desc"><?= $lang === 'id' ? 'Tanggal: Terbaru ⇅' : 'Date: Newest ⇅' ?></option>
+                        <option value="date_asc"><?= $lang === 'id' ? 'Tanggal: Terlama ⇅' : 'Date: Oldest ⇅' ?></option>
+                        <option value="cost_desc"><?= $lang === 'id' ? 'Biaya: Tertinggi ⇅' : 'Cost: High ⇅' ?></option>
+                        <option value="cost_asc"><?= $lang === 'id' ? 'Biaya: Terendah ⇅' : 'Cost: Low ⇅' ?></option>
                     </select>
 
                     <select id="filter-expense-checked" onchange="filterExpensesTable()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 130px;">
@@ -1326,10 +1478,10 @@ function format_date_bilingual($date_str, $lang = 'en', $format = 'd M Y') {
             <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; align-items: center;">
                 <span class="filter-label"><?= $lang === 'id' ? 'Urutan:' : 'Sort By:' ?></span>
                 <select id="sort-my-trips" onchange="sortMyTripsList()" class="filter-input" style="padding: 6px 10px; font-size: 0.8rem; width: auto; min-width: 140px;">
-                    <option value="date_desc">Date: Newest First</option>
-                    <option value="date_asc">Date: Oldest First</option>
-                    <option value="cost_desc">Cost: High to Low</option>
-                    <option value="cost_asc">Cost: Low to High</option>
+                    <option value="date_desc"><?= $lang === 'id' ? 'Tanggal: Terbaru ⇅' : 'Date: Newest First ⇅' ?></option>
+                    <option value="date_asc"><?= $lang === 'id' ? 'Tanggal: Terlama ⇅' : 'Date: Oldest First ⇅' ?></option>
+                    <option value="cost_desc"><?= $lang === 'id' ? 'Biaya: Tertinggi ⇅' : 'Cost: High to Low ⇅' ?></option>
+                    <option value="cost_asc"><?= $lang === 'id' ? 'Biaya: Terendah ⇅' : 'Cost: Low to High ⇅' ?></option>
                 </select>
             </div>
 
